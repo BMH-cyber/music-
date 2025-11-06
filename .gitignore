@@ -1,0 +1,4 @@
+downloads_music4u/
+*.pyc
+__pycache__/
+.env
