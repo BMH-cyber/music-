@@ -1,6 +1,5 @@
 import os
 import telebot
-from flask import Flask, request
 from pathlib import Path
 from dotenv import load_dotenv
 import threading
@@ -11,7 +10,7 @@ from PIL import Image
 from io import BytesIO
 import requests
 import subprocess
-from datetime import datetime
+from queue import Queue
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -141,8 +140,6 @@ def play(msg):
         return
     query = parts[1].strip()
     if chat_id not in active_downloads:
-        from queue import Queue
-        import threading
         stop_event = threading.Event()
         q = Queue()
         q.put(query)
@@ -161,25 +158,7 @@ def stop(msg):
     else:
         bot.send_message(chat_id, "ရပ်ရန် download မရှိပါ။")
 
-# ===== FLASK SERVER & WEBHOOK =====
-app = Flask(__name__)
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "!", 200
-
-@app.route("/")
-def home():
-    return "✅ Music 4U Bot is Alive!"
-
+# ===== RUN BOT =====
 if __name__ == "__main__":
-    # Set webhook
-    bot.remove_webhook()
-    WEBHOOK_URL = f"https://YOUR_RAILWAY_APP_URL/{TOKEN}"  # <-- Change to your Railway app URL
-    bot.set_webhook(url=WEBHOOK_URL)
-    port = int(os.environ.get("PORT", 8080))
-    print("✅ Bot and Webhook server running!")
-    app.run(host="0.0.0.0", port=port)
+    print("✅ Bot is running...")
+    bot.infinity_polling(timeout=60, long_polling_timeout=30)
