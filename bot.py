@@ -13,7 +13,7 @@ import subprocess
 from queue import Queue
 import time
 
-# ===== LOAD CONFIG =====
+# ===== CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -35,8 +35,7 @@ def download_and_send(chat_id, query, stop_event):
         for data in data_list:
             title = data.get("title", "Unknown")
             url = data.get("webpage_url")
-            if not url:
-                continue
+            if not url: continue
 
             out = os.path.join(tmpdir, "%(title)s.%(ext)s")
             cmd = [
@@ -140,6 +139,7 @@ def stop(msg):
 
 # ===== RUN =====
 if __name__=="__main__":
+    bot.remove_webhook()  # ✅ Clear webhook to prevent 409 conflict
     print("✅ Bot is running...")
     while True:
         try:
