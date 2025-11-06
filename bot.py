@@ -1,5 +1,6 @@
 import os
 import telebot
+from flask import Flask, request
 from pathlib import Path
 from dotenv import load_dotenv
 import threading
@@ -10,14 +11,13 @@ from PIL import Image
 from io import BytesIO
 import requests
 import subprocess
-from queue import Queue
-import time
+from datetime import datetime
 
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-MAX_FILESIZE = int(os.getenv("MAX_FILESIZE", 30*1024*1024))
+MAX_FILESIZE = 30 * 1024 * 1024
 
 bot = telebot.TeleBot(TOKEN)
 DOWNLOAD_DIR = Path("downloads_music4u")
@@ -46,7 +46,15 @@ def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
     try:
         info_json = subprocess.check_output(
-            ["yt-dlp", "--no-playlist", "--ignore-errors", "--no-warnings", "--print-json", "--skip-download", f"ytsearch5:{query}"],
+            [
+                "yt-dlp",
+                "--no-playlist",
+                "--ignore-errors",
+                "--no-warnings",
+                "--print-json",
+                "--skip-download",
+                f"ytsearch5:{query}"
+            ],
             text=True
         )
         data_list = [json.loads(line) for line in info_json.strip().split("\n") if line.strip()]
@@ -58,9 +66,11 @@ def download_and_send(chat_id, query, stop_event):
                 continue
 
             out = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            cmd = ["yt-dlp", "--no-playlist", "--ignore-errors", "--no-warnings",
-                   "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
-                   "--quiet", "--output", out, url]
+            cmd = [
+                "yt-dlp", "--no-playlist", "--ignore-errors", "--no-warnings",
+                "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
+                "--quiet", "--output", out, url
+            ]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             while proc.poll() is None:
                 if stop_event.is_set():
@@ -111,17 +121,16 @@ def process_queue(chat_id):
 # ===== TELEGRAM COMMANDS =====
 @bot.message_handler(commands=['start','help'])
 def start(msg):
-    bot.reply_to(msg,
+    bot.reply_to(msg, (
         "🎶 *Welcome to Music 4U*\n\n"
-        "သီချင်းရှာရန်: `/play <နာမည်>`\n"
-        "/stop - ရပ်ရန်\n"
+        "သီချင်းရှာရန်: `/play <နာမည်>` သို့မဟုတ် YouTube link\n"
+        "/stop - ဒေါင်းလုပ်ရပ်ရန်\n"
         "/subscribe - Broadcast join\n"
         "/unsubscribe - Broadcast cancel\n"
         "/status - Server uptime\n"
         "/about - Bot info\n"
-        "\n⚡ Fast • Reliable • 24/7 Online",
-        parse_mode="Markdown"
-    )
+        "\n⚡ Fast • Reliable • 24/7 Online"
+    ), parse_mode="Markdown")
 
 @bot.message_handler(commands=['play'])
 def play(msg):
@@ -132,6 +141,8 @@ def play(msg):
         return
     query = parts[1].strip()
     if chat_id not in active_downloads:
+        from queue import Queue
+        import threading
         stop_event = threading.Event()
         q = Queue()
         q.put(query)
@@ -150,13 +161,25 @@ def stop(msg):
     else:
         bot.send_message(chat_id, "ရပ်ရန် download မရှိပါ။")
 
-# ===== RUN BOT (polling mode) =====
-if __name__=="__main__":
-    bot.remove_webhook()  # Clear webhook to avoid 409 conflict
-    print("✅ Bot is running...")
-    while True:
-        try:
-            bot.infinity_polling(timeout=60)
-        except Exception as e:
-            print(f"⚠️ Polling error: {e}")
-            time.sleep(5)
+# ===== FLASK SERVER & WEBHOOK =====
+app = Flask(__name__)
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "!", 200
+
+@app.route("/")
+def home():
+    return "✅ Music 4U Bot is Alive!"
+
+if __name__ == "__main__":
+    # Set webhook
+    bot.remove_webhook()
+    WEBHOOK_URL = f"https://YOUR_RAILWAY_APP_URL/{TOKEN}"  # <-- Change to your Railway app URL
+    bot.set_webhook(url=WEBHOOK_URL)
+    port = int(os.environ.get("PORT", 8080))
+    print("✅ Bot and Webhook server running!")
+    app.run(host="0.0.0.0", port=port)
