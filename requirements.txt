@@ -1,6 +1,6 @@
-pyTelegramBotAPI==4.12.0
-yt-dlp>=2023.11.29
-Pillow
+pyTelegramBotAPI==4.14.0
 python-dotenv
-Flask
+Pillow
 requests
+Flask
+yt-dlp
