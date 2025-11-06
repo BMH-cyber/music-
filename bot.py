@@ -1,13 +1,15 @@
-import telebot, threading, subprocess, tempfile, os, time, json, requests, shutil
+import telebot, threading, subprocess, tempfile, os, time, json, shutil
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
 from datetime import datetime
 from dotenv import load_dotenv
 from queue import Queue
+from flask import Flask
+import requests
 
 # ===== LOAD CONFIG =====
-load_dotenv()  # load .env file
+load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DOWNLOAD_DIR = Path("downloads_music4u")
@@ -17,7 +19,7 @@ START_TIME = datetime.utcnow()
 bot = telebot.TeleBot(TOKEN)
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 subscribers = set()
-active_downloads = {}  # chat_id -> {"stop": Event, "queue": Queue()}
+active_downloads = {}
 
 # ===== LOAD SUBSCRIBERS =====
 DATA_FILE = Path("music4u_subscribers.json")
@@ -129,12 +131,10 @@ def stop(msg):
 def process_queue(chat_id):
     stop_event = active_downloads[chat_id]['stop']
     q = active_downloads[chat_id]['queue']
-
     while not q.empty() and not stop_event.is_set():
         query = q.get()
         download_and_send(chat_id, query, stop_event)
         q.task_done()
-
     if chat_id in active_downloads and q.empty():
         active_downloads.pop(chat_id,None)
 
@@ -144,13 +144,12 @@ def download_and_send(chat_id, query, stop_event):
     progress_msg_id = None
     last_update_time = 0
     UPDATE_INTERVAL = 0.5
-    TIMEOUT = 30
+    TIMEOUT = 60
 
     try:
-        info_json = subprocess.check_output(
-            ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch1:{query}"],
-            text=True
-        )
+        # Public-only search
+        info_cmd = ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch1:{query}"]
+        info_json = subprocess.check_output(info_cmd, text=True)
         data = json.loads(info_json)
         title = data.get("title","Unknown")
         bot.send_message(chat_id,f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
@@ -187,8 +186,9 @@ def download_and_send(chat_id, query, stop_event):
 
         files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
         if not files:
-            bot.send_message(chat_id,"🚫 ဖိုင် မတွေ့ပါ။")
+            bot.send_message(chat_id,"🚫 ဒီသီချင်းကို download မရပါ။ Public videos ကိုသာ support လုပ်ပါတယ်။")
             return
+
         fpath = os.path.join(tmpdir, files[0])
         if os.path.getsize(fpath) > MAX_FILESIZE:
             bot.send_message(chat_id,"⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
@@ -199,7 +199,7 @@ def download_and_send(chat_id, query, stop_event):
         if thumb_url:
             try:
                 img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
-                thumb_path = os.path.join(tmpdir, "thumb.jpg")
+                thumb_path = os.path.join(tmpdir,"thumb.jpg")
                 img.save(thumb_path)
                 with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
                     bot.send_audio(chat_id,aud,caption=caption,thumb=th,parse_mode="Markdown")
@@ -211,23 +211,18 @@ def download_and_send(chat_id, query, stop_event):
                 bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
 
         bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
-
+    except subprocess.CalledProcessError:
+        bot.send_message(chat_id,"🚫 ဒီသီချင်းကို download မရပါ။ Public videos ကိုသာ support လုပ်ပါတယ်။")
     except Exception as e:
         bot.send_message(chat_id,f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
     finally:
         shutil.rmtree(tmpdir,ignore_errors=True)
 
-# ===== FLASK PING SERVER FOR UPTIMEROBOT =====
-from flask import Flask
+# ===== FLASK PING SERVER =====
 app = Flask("")
-
 @app.route("/")
-def home():
-    return "Music4U Bot is running!"
-
-def run():
-    app.run(host="0.0.0.0", port=8080)
-
+def home(): return "Music4U Bot is running!"
+def run(): app.run(host="0.0.0.0", port=8080)
 threading.Thread(target=run).start()
 
 # ===== RUN BOT =====
