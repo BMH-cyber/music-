@@ -1,15 +1,13 @@
-# 🎵 Music 4U Bot
+# Telegram Music Bot (Burmese Search)
 
-24/7 Telegram Music Downloader Bot (Render-ready)
+- Telegram bot with `/play <song>` command
+- Uses `yt-dlp` to search YouTube songs
+- Unicode Burmese song search supported
+- 24/7 running on Railway using Flask keep-alive
 
-## Setup Guide
+## Deployment
 
-1. **Fork this repo** to your GitHub.
-2. **Create `.env`** file and add:
-3. Go to [Render.com](https://render.com) → “New Web Service”.
-4. Connect your GitHub → choose this repo.
-5. Environment → Python → Start Command:
-6. Save & Deploy 🚀  
-Bot will auto-run 24/7!
-
----
+1. Copy `.env.example` to `.env` and fill your TOKEN and ADMIN_ID
+2. Install dependencies: `pip install -r requirements.txt`
+3. Start bot: `python bot.py`
+4. On Railway: set Start Command to `python bot.py`
