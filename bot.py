@@ -35,10 +35,22 @@ def download_and_send(chat_id, query, stop_event):
         for data in data_list:
             title = data.get("title", "Unknown")
             url = data.get("webpage_url")
-            if not url: continue
+            if not url:
+                continue
 
             out = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            cmd = ["yt-dlp","--no-playlist","--ignore-errors","--no-warnings","--extract-audio","--audio-format","mp3","--audio-quality","0","--quiet","--output",out,url]
+            cmd = [
+                "yt-dlp",
+                "--no-playlist",
+                "--ignore-errors",
+                "--no-warnings",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--audio-quality", "0",
+                "--quiet",
+                "--output", out,
+                url
+            ]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             while proc.poll() is None:
                 if stop_event.is_set():
@@ -90,11 +102,12 @@ def process_queue(chat_id):
 # ===== Commands =====
 @bot.message_handler(commands=['start','help'])
 def start(msg):
-    bot.reply_to(msg,
+    bot.reply_to(
+        msg,
         "🎶 *Welcome to Music 4U*\n\n"
         "သီချင်းရှာရန်: `/play <နာမည်>`\n"
         "/stop - ရပ်ရန်\n"
-        "/status - Bot status\n"
+        "/status - Bot status\n",
         parse_mode="Markdown"
     )
 
@@ -102,28 +115,28 @@ def start(msg):
 def play(msg):
     chat_id = msg.chat.id
     parts = msg.text.split(maxsplit=1)
-    if len(parts)<2:
-        bot.reply_to(msg,"အသုံးပြုနည်း: `/play <နာမည်>`",parse_mode="Markdown")
+    if len(parts) < 2:
+        bot.reply_to(msg, "အသုံးပြုနည်း: `/play <နာမည်>`", parse_mode="Markdown")
         return
     query = parts[1].strip()
     if chat_id not in active_downloads:
         stop_event = threading.Event()
         q = Queue()
         q.put(query)
-        active_downloads[chat_id] = {"stop":stop_event,"queue":q}
-        threading.Thread(target=process_queue,args=(chat_id,),daemon=True).start()
+        active_downloads[chat_id] = {"stop": stop_event, "queue": q}
+        threading.Thread(target=process_queue, args=(chat_id,), daemon=True).start()
     else:
         active_downloads[chat_id]['queue'].put(query)
-        bot.reply_to(msg,"⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
+        bot.reply_to(msg, "⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
 
 @bot.message_handler(commands=['stop'])
 def stop(msg):
     chat_id = msg.chat.id
     if chat_id in active_downloads:
         active_downloads[chat_id]['stop'].set()
-        bot.send_message(chat_id,"🛑 Download ရပ်လိုက်ပါသည်။")
+        bot.send_message(chat_id, "🛑 Download ရပ်လိုက်ပါသည်။")
     else:
-        bot.send_message(chat_id,"ရပ်ရန် download မရှိပါ။")
+        bot.send_message(chat_id, "ရပ်ရန် download မရှိပါ။")
 
 # ===== RUN =====
 if __name__=="__main__":
