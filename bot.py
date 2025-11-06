@@ -6,6 +6,26 @@ from datetime import datetime
 from dotenv import load_dotenv
 from queue import Queue
 
+# ===== KEEP ALIVE SERVER =====
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "✅ Music 4U Bot is Alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.daemon = True
+    t.start()
+
+keep_alive()  # 🚀 Start keep-alive web server (for Replit 24/7)
+
 # ===== LOAD CONFIG =====
 load_dotenv()  # load .env file
 TOKEN = os.getenv("BOT_TOKEN")
