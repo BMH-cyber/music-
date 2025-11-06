@@ -1,11 +1,4 @@
 pyTelegramBotAPI==4.12.0
 yt-dlp==2025.10.06
 python-dotenv==1.1.0
-pip install -U yt-dlp
-pyTelegramBotAPI==4.12.0
-yt-dlp==2025.10.06
-python-dotenv==1.1.0
 Flask==2.3.3
-telebot
-requests
-Pillow
