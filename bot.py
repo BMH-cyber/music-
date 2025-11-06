@@ -13,16 +13,35 @@ import subprocess
 from queue import Queue
 import time
 
-# ===== CONFIG =====
+# ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MAX_FILESIZE = int(os.getenv("MAX_FILESIZE", 30*1024*1024))
 
 bot = telebot.TeleBot(TOKEN)
+DOWNLOAD_DIR = Path("downloads_music4u")
+DOWNLOAD_DIR.mkdir(exist_ok=True)
+
+# ===== SUBSCRIBERS =====
+DATA_FILE = Path("music4u_subscribers.json")
+subscribers = set()
+if DATA_FILE.exists():
+    try:
+        subscribers = set(json.loads(DATA_FILE.read_text()))
+    except:
+        subscribers = set()
+
+def save_subs():
+    DATA_FILE.write_text(json.dumps(list(subscribers)))
+
+# ===== HELPERS =====
+def is_admin(uid):
+    return uid == ADMIN_ID
+
+# ===== CORE LOGIC =====
 active_downloads = {}
 
-# ===== Download function =====
 def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
     try:
@@ -35,28 +54,19 @@ def download_and_send(chat_id, query, stop_event):
         for data in data_list:
             title = data.get("title", "Unknown")
             url = data.get("webpage_url")
-            if not url: continue
+            if not url:
+                continue
 
             out = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            cmd = [
-                "yt-dlp",
-                "--no-playlist",
-                "--ignore-errors",
-                "--no-warnings",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
-                "--quiet",
-                "--output", out,
-                url
-            ]
+            cmd = ["yt-dlp", "--no-playlist", "--ignore-errors", "--no-warnings",
+                   "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
+                   "--quiet", "--output", out, url]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             while proc.poll() is None:
                 if stop_event.is_set():
                     proc.terminate()
                     bot.send_message(chat_id, "❌ Download stopped")
                     return
-
             files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
             if files:
                 fpath = os.path.join(tmpdir, files[0])
@@ -98,15 +108,18 @@ def process_queue(chat_id):
     if chat_id in active_downloads and q.empty():
         active_downloads.pop(chat_id, None)
 
-# ===== Commands =====
+# ===== TELEGRAM COMMANDS =====
 @bot.message_handler(commands=['start','help'])
 def start(msg):
-    bot.reply_to(
-        msg,
+    bot.reply_to(msg,
         "🎶 *Welcome to Music 4U*\n\n"
         "သီချင်းရှာရန်: `/play <နာမည်>`\n"
         "/stop - ရပ်ရန်\n"
-        "/status - Bot status\n",
+        "/subscribe - Broadcast join\n"
+        "/unsubscribe - Broadcast cancel\n"
+        "/status - Server uptime\n"
+        "/about - Bot info\n"
+        "\n⚡ Fast • Reliable • 24/7 Online",
         parse_mode="Markdown"
     )
 
@@ -137,13 +150,13 @@ def stop(msg):
     else:
         bot.send_message(chat_id, "ရပ်ရန် download မရှိပါ။")
 
-# ===== RUN =====
+# ===== RUN BOT (polling mode) =====
 if __name__=="__main__":
-    bot.remove_webhook()  # ✅ Clear webhook to prevent 409 conflict
+    bot.remove_webhook()  # Clear webhook to avoid 409 conflict
     print("✅ Bot is running...")
     while True:
         try:
             bot.infinity_polling(timeout=60)
         except Exception as e:
-            print(f"⚠️ Bot polling error: {e}")
+            print(f"⚠️ Polling error: {e}")
             time.sleep(5)
