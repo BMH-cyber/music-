@@ -1,27 +1,20 @@
-import telebot, threading, subprocess, tempfile, os, time, json, shutil
+import os
+import threading
+import subprocess
+import tempfile
+import shutil
+import time
+import json
 from pathlib import Path
-from PIL import Image
-from io import BytesIO
 from datetime import datetime
-from dotenv import load_dotenv
 from queue import Queue
-from flask import Flask
+from io import BytesIO
+
+import telebot
+from PIL import Image
 import requests
-
-# ===== KEEP ALIVE SERVER =====
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "✅ Music 4U Bot is Alive!"
-
-def run_server():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = threading.Thread(target=run_server)
-    t.daemon = True
-    t.start()
+from flask import Flask
+from dotenv import load_dotenv
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -35,29 +28,44 @@ bot = telebot.TeleBot(TOKEN)
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 subscribers = set()
 active_downloads = {}
+DATA_FILE = Path("music4u_subscribers.json")
+lock = threading.Lock()
 
-keep_alive()
+# ===== FLASK KEEP ALIVE =====
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "✅ Music 4U Bot is Alive!"
+
+def run_server():
+    app.run(host="0.0.0.0", port=8080, debug=False)
+
+def keep_alive():
+    t = threading.Thread(target=run_server)
+    t.daemon = True
+    t.start()
 
 # ===== SUBSCRIBERS =====
-DATA_FILE = Path("music4u_subscribers.json")
 def load_subscribers():
     global subscribers
     if DATA_FILE.exists():
         try:
-            subscribers = set(json.loads(DATA_FILE.read_text()))
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                subscribers = set(json.load(f))
         except:
             subscribers = set()
 
-threading.Thread(target=load_subscribers, daemon=True).start()
-
 def save_subs():
-    DATA_FILE.write_text(json.dumps(list(subscribers)))
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(subscribers), f)
 
-def is_admin(uid): 
+# ===== ADMIN CHECK =====
+def is_admin(uid):
     return uid == ADMIN_ID
 
 # ===== COMMANDS =====
-@bot.message_handler(commands=['start','help'])
+@bot.message_handler(commands=["start", "help"])
 def start(msg):
     bot.reply_to(msg, (
         "🎶 *Welcome to Music 4U*\n\n"
@@ -70,7 +78,7 @@ def start(msg):
         "\n⚡ Fast • Reliable • 24/7 Online"
     ), parse_mode="Markdown")
 
-@bot.message_handler(commands=['play'])
+@bot.message_handler(commands=["play"])
 def play(msg):
     chat_id = msg.chat.id
     parts = msg.text.split(maxsplit=1)
@@ -79,37 +87,40 @@ def play(msg):
         return
     query = parts[1].strip()
 
-    if chat_id not in active_downloads:
-        stop_event = threading.Event()
-        q = Queue()
-        q.put(query)
-        active_downloads[chat_id] = {"stop": stop_event, "queue": q}
-        threading.Thread(target=process_queue, args=(chat_id,), daemon=True).start()
-    else:
-        active_downloads[chat_id]['queue'].put(query)
-        bot.reply_to(msg, "⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
+    with lock:
+        if chat_id not in active_downloads:
+            stop_event = threading.Event()
+            q = Queue()
+            q.put(query)
+            active_downloads[chat_id] = {"stop": stop_event, "queue": q}
+            threading.Thread(target=process_queue, args=(chat_id,), daemon=True).start()
+        else:
+            active_downloads[chat_id]["queue"].put(query)
+            bot.reply_to(msg, "⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
 
-@bot.message_handler(commands=['stop'])
+@bot.message_handler(commands=["stop"])
 def stop(msg):
     chat_id = msg.chat.id
-    if chat_id in active_downloads:
-        active_downloads[chat_id]['stop'].set()
-        bot.reply_to(msg, "🛑 Download ရပ်လိုက်ပါသည်။")
-    else:
-        bot.reply_to(msg, "ရပ်ရန် download မရှိပါ။")
+    with lock:
+        if chat_id in active_downloads:
+            active_downloads[chat_id]["stop"].set()
+            bot.reply_to(msg, "🛑 Download ရပ်လိုက်ပါသည်။")
+        else:
+            bot.reply_to(msg, "ရပ်ရန် download မရှိပါ။")
 
 # ===== QUEUE PROCESSING =====
 def process_queue(chat_id):
-    stop_event = active_downloads[chat_id]['stop']
-    q = active_downloads[chat_id]['queue']
+    stop_event = active_downloads[chat_id]["stop"]
+    q = active_downloads[chat_id]["queue"]
     while not q.empty() and not stop_event.is_set():
         query = q.get()
         download_and_send(chat_id, query, stop_event)
         q.task_done()
-    if chat_id in active_downloads and q.empty():
-        active_downloads.pop(chat_id, None)
+    with lock:
+        if chat_id in active_downloads and q.empty():
+            active_downloads.pop(chat_id, None)
 
-# ===== CORE LOGIC =====
+# ===== CORE DOWNLOAD LOGIC =====
 def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
     progress_msg_id = None
@@ -118,17 +129,10 @@ def download_and_send(chat_id, query, stop_event):
     TIMEOUT = 60
 
     try:
-        # 🔧 Added flags to suppress YouTube SABR streaming warnings
+        # Fetch metadata
         info_json = subprocess.check_output(
-            [
-                "yt-dlp",
-                "--no-playlist",
-                "--ignore-errors",
-                "--no-warnings",
-                "--print-json",
-                "--skip-download",
-                f"ytsearch5:{query}"
-            ],
+            ["yt-dlp", "--no-playlist", "--ignore-errors", "--no-warnings",
+             "--print-json", "--skip-download", f"ytsearch5:{query}"],
             text=True
         )
 
@@ -148,8 +152,10 @@ def download_and_send(chat_id, query, stop_event):
                 "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
                 "--quiet", "--output", out, url
             ]
+
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             start_time = time.time()
+
             while proc.poll() is None:
                 if stop_event.is_set():
                     proc.terminate()
@@ -181,17 +187,17 @@ def download_and_send(chat_id, query, stop_event):
                     return
                 caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
                 thumb_url = data.get("thumbnail")
-                if thumb_url:
-                    try:
+                try:
+                    if thumb_url:
                         img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
                         thumb_path = os.path.join(tmpdir, "thumb.jpg")
                         img.save(thumb_path)
                         with open(fpath, "rb") as aud, open(thumb_path, "rb") as th:
                             bot.send_audio(chat_id, aud, caption=caption, thumb=th, parse_mode="Markdown")
-                    except:
+                    else:
                         with open(fpath, "rb") as aud:
                             bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
-                else:
+                except:
                     with open(fpath, "rb") as aud:
                         bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
 
@@ -207,13 +213,13 @@ def download_and_send(chat_id, query, stop_event):
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-# ===== RUN BOT THREAD =====
+# ===== RUN BOT =====
 def start_bot():
+    print("✅ Bot is starting...")
     bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
 
-threading.Thread(target=start_bot, daemon=True).start()
-print("✅ Bot is running and ready!")
-
-# ===== START SERVER =====
+# ===== MAIN =====
 if __name__ == "__main__":
-    keep_alive()
+    keep_alive()  # Flask server thread
+    load_subscribers()
+    start_bot()   # Run bot in main thread
