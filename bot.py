@@ -4,24 +4,23 @@ from PIL import Image
 from io import BytesIO
 from datetime import datetime
 from dotenv import load_dotenv
+from queue import Queue
 
 # ===== LOAD CONFIG =====
-load_dotenv()
+load_dotenv()  # load .env file
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-DATA_FILE = Path("music4u_subscribers.json")
 DOWNLOAD_DIR = Path("downloads_music4u")
-RATE_LIMIT_SECONDS = 60
 MAX_FILESIZE = 30 * 1024 * 1024
 START_TIME = datetime.utcnow()
 
 bot = telebot.TeleBot(TOKEN)
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 subscribers = set()
-user_last_use = {}
-active_downloads = {}
+active_downloads = {}  # chat_id -> {"stop": Event, "queue": Queue()}
 
-# ===== LOAD SUBSCRIBERS IN BACKGROUND =====
+# ===== LOAD SUBSCRIBERS =====
+DATA_FILE = Path("music4u_subscribers.json")
 def load_subscribers():
     global subscribers
     if DATA_FILE.exists():
@@ -53,12 +52,8 @@ def start(msg):
 @bot.message_handler(commands=['about'])
 def about(msg):
     bot.reply_to(msg, (
-        "🎵 *Music 4U Bot*\n"
-        "Created by ❤️ Developer\n"
-        "Powered by `yt-dlp`\n"
-        "24/7 Cloud Hosted\n\n"
-        "Commands:\n"
-        "• /play <song>\n• /stop\n• /subscribe\n• /unsubscribe\n• /status\n• /about"
+        "🎵 *Music 4U Bot*\nCreated by ❤️ Developer\nPowered by `yt-dlp`\n24/7 Cloud Hosted\n\n"
+        "Commands:\n• /play <song>\n• /stop\n• /subscribe\n• /unsubscribe\n• /status\n• /about"
     ), parse_mode="Markdown")
 
 @bot.message_handler(commands=['status'])
@@ -66,13 +61,6 @@ def status(msg):
     uptime = datetime.utcnow() - START_TIME
     bot.reply_to(msg, f"🕐 *Uptime:* {str(uptime).split('.')[0]}\n👥 Subscribers: {len(subscribers)}",
                  parse_mode="Markdown")
-
-@bot.message_handler(commands=['ping'])
-def ping(msg):
-    start = time.time()
-    m = bot.reply_to(msg, "🏓 Pinging…")
-    end = time.time()
-    bot.edit_message_text(f"🏓 Pong! `{int((end-start)*1000)} ms`", msg.chat.id, m.message_id, parse_mode="Markdown")
 
 @bot.message_handler(commands=['subscribe'])
 def sub(msg):
@@ -112,45 +100,50 @@ def blast(msg):
 @bot.message_handler(commands=['play'])
 def play(msg):
     chat_id = msg.chat.id
-    user_id = msg.from_user.id
-    now = time.time()
-    last_use = user_last_use.get(user_id,0)
-    if now - last_use < RATE_LIMIT_SECONDS:
-        wait = int(RATE_LIMIT_SECONDS - (now - last_use))
-        bot.reply_to(msg, f"⚠️ နောက်ထပ် {wait} စက္ကန့်စောင့်ပါ။")
-        return
-    user_last_use[user_id] = now
-
     parts = msg.text.split(maxsplit=1)
     if len(parts) < 2:
         bot.reply_to(msg, "အသုံးပြုနည်း: `/play <နာမည်>`", parse_mode="Markdown")
         return
     query = parts[1].strip()
 
-    if chat_id in active_downloads:
-        bot.reply_to(msg, "🕐 Download တစ်ခုလုပ်နေပါသည်။ /stop ဖြင့် ရပ်ပါ။")
-        return
-
-    stop_event = threading.Event()
-    active_downloads[chat_id] = {"stop": stop_event}
-    th = threading.Thread(target=download_and_send, args=(chat_id, query, stop_event))
-    th.start()
+    if chat_id not in active_downloads:
+        stop_event = threading.Event()
+        q = Queue()
+        q.put(query)
+        active_downloads[chat_id] = {"stop": stop_event, "queue": q}
+        threading.Thread(target=process_queue, args=(chat_id,)).start()
+    else:
+        active_downloads[chat_id]['queue'].put(query)
+        bot.reply_to(msg, "⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
 
 @bot.message_handler(commands=['stop'])
 def stop(msg):
     chat_id = msg.chat.id
-    if chat_id not in active_downloads:
+    if chat_id in active_downloads:
+        active_downloads[chat_id]['stop'].set()
+        bot.reply_to(msg, "🛑 Download ရပ်လိုက်ပါသည်။")
+    else:
         bot.reply_to(msg, "ရပ်ရန် download မရှိပါ။")
-        return
-    active_downloads[chat_id]['stop'].set()
-    bot.reply_to(msg, "🛑 ဒေါင်းလုပ် ရပ်လိုက်ပါသည်။")
+
+# ===== QUEUE PROCESSING =====
+def process_queue(chat_id):
+    stop_event = active_downloads[chat_id]['stop']
+    q = active_downloads[chat_id]['queue']
+
+    while not q.empty() and not stop_event.is_set():
+        query = q.get()
+        download_and_send(chat_id, query, stop_event)
+        q.task_done()
+
+    if chat_id in active_downloads and q.empty():
+        active_downloads.pop(chat_id,None)
 
 # ===== CORE LOGIC =====
 def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
     progress_msg_id = None
     last_update_time = 0
-    UPDATE_INTERVAL = 1.0
+    UPDATE_INTERVAL = 0.5
     TIMEOUT = 30
 
     try:
@@ -165,7 +158,7 @@ def download_and_send(chat_id, query, stop_event):
         out = os.path.join(tmpdir, "%(title)s.%(ext)s")
         cmd = [
             "yt-dlp","--no-playlist","--extract-audio","--audio-format","mp3",
-            "--audio-quality","5","--output",out,f"ytsearch1:{query}"
+            "--audio-quality","0","--quiet","--output",out,f"ytsearch1:{query}"
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         start_time = time.time()
@@ -190,7 +183,7 @@ def download_and_send(chat_id, query, stop_event):
                     try: bot.edit_message_text(msg_text,chat_id,progress_msg_id)
                     except: pass
                 last_update_time = now
-            time.sleep(0.5)
+            time.sleep(0.3)
 
         files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
         if not files:
@@ -205,7 +198,7 @@ def download_and_send(chat_id, query, stop_event):
         thumb_url = data.get("thumbnail")
         if thumb_url:
             try:
-                img = Image.open(BytesIO(requests.get(thumb_url).content))
+                img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
                 thumb_path = os.path.join(tmpdir,"thumb.jpg")
                 img.save(thumb_path)
                 with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
@@ -223,7 +216,6 @@ def download_and_send(chat_id, query, stop_event):
         bot.send_message(chat_id,f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
     finally:
         shutil.rmtree(tmpdir,ignore_errors=True)
-        active_downloads.pop(chat_id,None)
 
+# ===== RUN BOT =====
 bot.infinity_polling(timeout=60, long_polling_timeout=30)
-        
