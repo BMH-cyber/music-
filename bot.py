@@ -1,4 +1,4 @@
-import telebot, threading, subprocess, tempfile, os, time, json, shutil
+import telebot, threading, subprocess, tempfile, os, time, json, shutil, requests
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
@@ -6,9 +6,21 @@ from datetime import datetime
 from dotenv import load_dotenv
 from queue import Queue
 from flask import Flask
-import requests
 
-# ===== LOAD CONFIG =====
+# ===== FLASK KEEP ALIVE =====
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "✅ Music 4U Bot is Alive!"
+
+def run_server():
+    app.run(host='0.0.0.0', port=8080, threaded=True)
+
+def keep_alive():
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+
+# ===== CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -21,15 +33,16 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 subscribers = set()
 active_downloads = {}
 
+# ===== START KEEP ALIVE SERVER =====
+keep_alive()
+
 # ===== LOAD SUBSCRIBERS =====
 DATA_FILE = Path("music4u_subscribers.json")
 def load_subscribers():
     global subscribers
     if DATA_FILE.exists():
-        try:
-            subscribers = set(json.loads(DATA_FILE.read_text()))
-        except:
-            subscribers = set()
+        try: subscribers = set(json.loads(DATA_FILE.read_text()))
+        except: subscribers = set()
 threading.Thread(target=load_subscribers, daemon=True).start()
 
 def save_subs():
@@ -61,8 +74,7 @@ def about(msg):
 @bot.message_handler(commands=['status'])
 def status(msg):
     uptime = datetime.utcnow() - START_TIME
-    bot.reply_to(msg, f"🕐 *Uptime:* {str(uptime).split('.')[0]}\n👥 Subscribers: {len(subscribers)}",
-                 parse_mode="Markdown")
+    bot.reply_to(msg, f"🕐 *Uptime:* {str(uptime).split('.')[0]}\n👥 Subscribers: {len(subscribers)}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['subscribe'])
 def sub(msg):
@@ -94,8 +106,7 @@ def blast(msg):
         try:
             bot.send_message(uid, text)
             time.sleep(0.2)
-        except:
-            continue
+        except: continue
     bot.send_message(msg.chat.id, "✅ ပေးပို့ပြီးပါပြီ။")
 
 # ===== PLAY / STOP =====
@@ -113,7 +124,7 @@ def play(msg):
         q = Queue()
         q.put(query)
         active_downloads[chat_id] = {"stop": stop_event, "queue": q}
-        threading.Thread(target=process_queue, args=(chat_id,)).start()
+        threading.Thread(target=process_queue, args=(chat_id,), daemon=True).start()
     else:
         active_downloads[chat_id]['queue'].put(query)
         bot.reply_to(msg, "⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
@@ -136,94 +147,84 @@ def process_queue(chat_id):
         download_and_send(chat_id, query, stop_event)
         q.task_done()
     if chat_id in active_downloads and q.empty():
-        active_downloads.pop(chat_id,None)
+        active_downloads.pop(chat_id, None)
 
-# ===== CORE LOGIC =====
+# ===== CORE DOWNLOAD LOGIC =====
 def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
     progress_msg_id = None
     last_update_time = 0
     UPDATE_INTERVAL = 0.5
-    TIMEOUT = 60
-
+    TIMEOUT = 30
     try:
-        # Public-only search
-        info_cmd = ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch1:{query}"]
-        info_json = subprocess.check_output(info_cmd, text=True)
+        info_json = subprocess.check_output(
+            ["yt-dlp", "--no-playlist", "--print-json", "--skip-download", f"ytsearch1:{query}"], text=True
+        )
         data = json.loads(info_json)
-        title = data.get("title","Unknown")
-        bot.send_message(chat_id,f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
+        title = data.get("title", "Unknown")
+        bot.send_message(chat_id, f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
 
         out = os.path.join(tmpdir, "%(title)s.%(ext)s")
         cmd = [
-            "yt-dlp","--no-playlist","--extract-audio","--audio-format","mp3",
-            "--audio-quality","0","--quiet","--output",out,f"ytsearch1:{query}"
+            "yt-dlp", "--no-playlist", "--extract-audio", "--audio-format", "mp3",
+            "--audio-quality", "0", "--quiet", "--output", out, f"ytsearch1:{query}"
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         start_time = time.time()
-
         while proc.poll() is None:
             if stop_event.is_set():
                 proc.terminate()
-                bot.send_message(chat_id,"❌ Download stopped")
+                bot.send_message(chat_id, "❌ Download stopped")
                 return
             if time.time() - start_time > TIMEOUT:
                 proc.terminate()
-                bot.send_message(chat_id,"⏱️ Download timeout")
+                bot.send_message(chat_id, "⏱️ Download timeout")
                 return
             now = time.time()
             if now - last_update_time > UPDATE_INTERVAL:
-                dots = "." * int(((now*2)%4)+1)
+                dots = "." * int(((now * 2) % 4) + 1)
                 msg_text = f"📥 Downloading{dots}"
                 if not progress_msg_id:
-                    m = bot.send_message(chat_id,msg_text)
+                    m = bot.send_message(chat_id, msg_text)
                     progress_msg_id = m.message_id
                 else:
-                    try: bot.edit_message_text(msg_text,chat_id,progress_msg_id)
+                    try: bot.edit_message_text(msg_text, chat_id, progress_msg_id)
                     except: pass
                 last_update_time = now
             time.sleep(0.3)
 
         files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
         if not files:
-            bot.send_message(chat_id,"🚫 ဒီသီချင်းကို download မရပါ။ Public videos ကိုသာ support လုပ်ပါတယ်။")
+            bot.send_message(chat_id, "🚫 ဖိုင် မတွေ့ပါ။")
             return
-
         fpath = os.path.join(tmpdir, files[0])
         if os.path.getsize(fpath) > MAX_FILESIZE:
-            bot.send_message(chat_id,"⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
+            bot.send_message(chat_id, "⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
             return
 
         caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
         thumb_url = data.get("thumbnail")
-        if thumb_url:
-            try:
+        try:
+            if thumb_url:
                 img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
-                thumb_path = os.path.join(tmpdir,"thumb.jpg")
+                thumb_path = os.path.join(tmpdir, "thumb.jpg")
                 img.save(thumb_path)
-                with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
-                    bot.send_audio(chat_id,aud,caption=caption,thumb=th,parse_mode="Markdown")
-            except:
-                with open(fpath,"rb") as aud:
-                    bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
-        else:
-            with open(fpath,"rb") as aud:
-                bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+                with open(fpath, "rb") as aud, open(thumb_path, "rb") as th:
+                    bot.send_audio(chat_id, aud, caption=caption, thumb=th, parse_mode="Markdown")
+            else:
+                with open(fpath, "rb") as aud:
+                    bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
+            bot.send_message(chat_id, "✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
+        except:
+            with open(fpath, "rb") as aud:
+                bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
+            bot.send_message(chat_id, "✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
 
-        bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
-    except subprocess.CalledProcessError:
-        bot.send_message(chat_id,"🚫 ဒီသီချင်းကို download မရပါ။ Public videos ကိုသာ support လုပ်ပါတယ်။")
     except Exception as e:
-        bot.send_message(chat_id,f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
+        bot.send_message(chat_id, f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
     finally:
-        shutil.rmtree(tmpdir,ignore_errors=True)
-
-# ===== FLASK PING SERVER =====
-app = Flask("")
-@app.route("/")
-def home(): return "Music4U Bot is running!"
-def run(): app.run(host="0.0.0.0", port=8080)
-threading.Thread(target=run).start()
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 # ===== RUN BOT =====
-bot.infinity_polling(timeout=60, long_polling_timeout=30)
+print("✅ Bot is running...")
+bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
