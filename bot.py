@@ -10,7 +10,6 @@ from queue import Queue
 load_dotenv()  # load .env file
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-PORT = int(os.getenv("PORT", 8080))
 DOWNLOAD_DIR = Path("downloads_music4u")
 MAX_FILESIZE = 30 * 1024 * 1024
 START_TIME = datetime.utcnow()
@@ -112,7 +111,7 @@ def play(msg):
         q = Queue()
         q.put(query)
         active_downloads[chat_id] = {"stop": stop_event, "queue": q}
-        threading.Thread(target=process_queue, args=(chat_id,), daemon=True).start()
+        threading.Thread(target=process_queue, args=(chat_id,)).start()
     else:
         active_downloads[chat_id]['queue'].put(query)
         bot.reply_to(msg, "⏳ Download queue ထဲသို့ထည့်လိုက်ပါသည်။")
@@ -145,21 +144,15 @@ def download_and_send(chat_id, query, stop_event):
     progress_msg_id = None
     last_update_time = 0
     UPDATE_INTERVAL = 0.5
-    TIMEOUT = 180
+    TIMEOUT = 30
 
     try:
-        # Get video info safely
-        try:
-            info_json = subprocess.check_output(
-                ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch1:{query}"],
-                text=True, stderr=subprocess.DEVNULL
-            )
-            data = json.loads(info_json)
-            title = data.get("title","Unknown")
-        except Exception:
-            bot.send_message(chat_id,"🚫 သီချင်းရှာမရပါ။")
-            return
-
+        info_json = subprocess.check_output(
+            ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch1:{query}"],
+            text=True
+        )
+        data = json.loads(info_json)
+        title = data.get("title","Unknown")
         bot.send_message(chat_id,f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
 
         out = os.path.join(tmpdir, "%(title)s.%(ext)s")
@@ -206,4 +199,36 @@ def download_and_send(chat_id, query, stop_event):
         if thumb_url:
             try:
                 img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
-                thumb_path = os.path.join(tmpdir,"
+                thumb_path = os.path.join(tmpdir, "thumb.jpg")
+                img.save(thumb_path)
+                with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
+                    bot.send_audio(chat_id,aud,caption=caption,thumb=th,parse_mode="Markdown")
+            except:
+                with open(fpath,"rb") as aud:
+                    bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+        else:
+            with open(fpath,"rb") as aud:
+                bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+
+        bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
+
+    except Exception as e:
+        bot.send_message(chat_id,f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
+    finally:
+        shutil.rmtree(tmpdir,ignore_errors=True)
+
+# ===== FLASK PING SERVER FOR UPTIMEROBOT =====
+from flask import Flask
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Music4U Bot is running!"
+
+def run():
+    app.run(host="0.0.0.0", port=8080)
+
+threading.Thread(target=run).start()
+
+# ===== RUN BOT =====
+bot.infinity_polling(timeout=60, long_polling_timeout=30)
