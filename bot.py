@@ -10,7 +10,6 @@ import requests
 
 # ===== KEEP ALIVE SERVER =====
 app = Flask(__name__)
-
 @app.route('/')
 def home():
     return "✅ Music 4U Bot is Alive!"
@@ -27,6 +26,7 @@ def keep_alive():
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+COOKIE_FILE = os.getenv("COOKIE_FILE")  # optional
 DOWNLOAD_DIR = Path("downloads_music4u")
 MAX_FILESIZE = 30 * 1024 * 1024
 START_TIME = datetime.utcnow()
@@ -111,14 +111,17 @@ def download_and_send(chat_id, query, stop_event):
     progress_msg_id = None
     last_update_time = 0
     UPDATE_INTERVAL = 0.5
-    TIMEOUT = 60  # increased timeout
+    TIMEOUT = 60
 
     try:
-        info_json = subprocess.check_output(
-            ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch5:{query}"], text=True
-        )
+        # ✅ Top 5 search results
+        cmd_search = ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch5:{query}"]
+        if COOKIE_FILE and Path(COOKIE_FILE).exists():
+            cmd_search += ["--cookies", COOKIE_FILE]
+        info_json = subprocess.check_output(cmd_search, text=True)
         data_list = [json.loads(line) for line in info_json.strip().split("\n")]
         video_found = False
+
         for data in data_list:
             title = data.get("title","Unknown")
             url = data.get("webpage_url")
@@ -126,12 +129,16 @@ def download_and_send(chat_id, query, stop_event):
 
             bot.send_message(chat_id, f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
             out = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            cmd = [
+            cmd_dl = [
                 "yt-dlp","--no-playlist","--extract-audio","--audio-format","mp3",
                 "--audio-quality","0","--quiet","--output",out,url
             ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if COOKIE_FILE and Path(COOKIE_FILE).exists():
+                cmd_dl += ["--cookies", COOKIE_FILE]
+
+            proc = subprocess.Popen(cmd_dl, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             start_time = time.time()
+
             while proc.poll() is None:
                 if stop_event.is_set():
                     proc.terminate()
@@ -159,6 +166,7 @@ def download_and_send(chat_id, query, stop_event):
                 if os.path.getsize(fpath) > MAX_FILESIZE:
                     bot.send_message(chat_id,"⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
                     return
+
                 caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
                 thumb_url = data.get("thumbnail")
                 if thumb_url:
@@ -174,6 +182,7 @@ def download_and_send(chat_id, query, stop_event):
                 else:
                     with open(fpath,"rb") as aud:
                         bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+
                 bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
                 video_found = True
                 break
@@ -186,13 +195,6 @@ def download_and_send(chat_id, query, stop_event):
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-# ===== RUN BOT THREAD =====
-def start_bot():
-    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
-
-threading.Thread(target=start_bot, daemon=True).start()
-print("✅ Bot is running and ready!")
-
-# ===== START SERVER =====
-if __name__ == "__main__":
-    keep_alive()
+# ===== RUN BOT =====
+print("✅ Bot is running...")
+bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
