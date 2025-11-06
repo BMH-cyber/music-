@@ -1,5 +1,5 @@
-pyTelegramBotAPI
-Pillow
-requests
+pyTelegramBotAPI==4.11.0
 yt-dlp
-Flask
+Pillow
+python-dotenv
+requests
