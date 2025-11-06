@@ -3,3 +3,4 @@ yt-dlp>=2023.11.29
 Flask
 Pillow
 requests
+python-dotenv
