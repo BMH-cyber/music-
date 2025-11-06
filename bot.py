@@ -1,4 +1,4 @@
-import telebot, threading, subprocess, tempfile, os, time, json, shutil, requests
+import telebot, threading, subprocess, tempfile, os, time, json, shutil
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
@@ -6,21 +6,23 @@ from datetime import datetime
 from dotenv import load_dotenv
 from queue import Queue
 from flask import Flask
+import requests
 
-# ===== FLASK KEEP ALIVE =====
+# ===== KEEP ALIVE SERVER =====
 app = Flask(__name__)
 @app.route('/')
 def home():
     return "✅ Music 4U Bot is Alive!"
 
 def run_server():
-    app.run(host='0.0.0.0', port=8080, threaded=True)
+    app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    thread = threading.Thread(target=run_server, daemon=True)
-    thread.start()
+    t = threading.Thread(target=run_server)
+    t.daemon = True
+    t.start()
 
-# ===== CONFIG =====
+# ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -33,10 +35,9 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 subscribers = set()
 active_downloads = {}
 
-# ===== START KEEP ALIVE SERVER =====
 keep_alive()
 
-# ===== LOAD SUBSCRIBERS =====
+# ===== SUBSCRIBERS =====
 DATA_FILE = Path("music4u_subscribers.json")
 def load_subscribers():
     global subscribers
@@ -50,7 +51,7 @@ def save_subs():
 
 def is_admin(uid): return uid == ADMIN_ID
 
-# ===== BASIC COMMANDS =====
+# ===== COMMANDS =====
 @bot.message_handler(commands=['start','help'])
 def start(msg):
     bot.reply_to(msg, (
@@ -64,52 +65,6 @@ def start(msg):
         "\n⚡ Fast • Reliable • 24/7 Online"
     ), parse_mode="Markdown")
 
-@bot.message_handler(commands=['about'])
-def about(msg):
-    bot.reply_to(msg, (
-        "🎵 *Music 4U Bot*\nCreated by ❤️ Developer\nPowered by `yt-dlp`\n24/7 Cloud Hosted\n\n"
-        "Commands:\n• /play <song>\n• /stop\n• /subscribe\n• /unsubscribe\n• /status\n• /about"
-    ), parse_mode="Markdown")
-
-@bot.message_handler(commands=['status'])
-def status(msg):
-    uptime = datetime.utcnow() - START_TIME
-    bot.reply_to(msg, f"🕐 *Uptime:* {str(uptime).split('.')[0]}\n👥 Subscribers: {len(subscribers)}", parse_mode="Markdown")
-
-@bot.message_handler(commands=['subscribe'])
-def sub(msg):
-    subscribers.add(msg.from_user.id)
-    save_subs()
-    bot.reply_to(msg, "✅ Broadcast မက်ဆေ့ချ်များ ရရှိရန် သဘောတူပြီးပါပြီ။")
-
-@bot.message_handler(commands=['unsubscribe'])
-def unsub(msg):
-    if msg.from_user.id in subscribers:
-        subscribers.remove(msg.from_user.id)
-        save_subs()
-        bot.reply_to(msg, "❌ Broadcast မက်ဆေ့ချ်များ ရပ်လိုက်ပါသည်။")
-    else:
-        bot.reply_to(msg, "သင်မရရှိထားပါ။")
-
-@bot.message_handler(commands=['blast'])
-def blast(msg):
-    if not is_admin(msg.from_user.id):
-        bot.reply_to(msg, "🚫 သင် admin မဟုတ်ပါ။")
-        return
-    parts = msg.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(msg, "အသုံးပြုနည်း: `/blast <မက်ဆေ့ချ်>`", parse_mode="Markdown")
-        return
-    text = parts[1]
-    bot.reply_to(msg, f"📢 Subscribers {len(subscribers)} ဦးသို့ မက်ဆေ့ချ်ပေးနေသည်...")
-    for uid in list(subscribers):
-        try:
-            bot.send_message(uid, text)
-            time.sleep(0.2)
-        except: continue
-    bot.send_message(msg.chat.id, "✅ ပေးပို့ပြီးပါပြီ။")
-
-# ===== PLAY / STOP =====
 @bot.message_handler(commands=['play'])
 def play(msg):
     chat_id = msg.chat.id
@@ -149,79 +104,85 @@ def process_queue(chat_id):
     if chat_id in active_downloads and q.empty():
         active_downloads.pop(chat_id, None)
 
-# ===== CORE DOWNLOAD LOGIC =====
+# ===== CORE LOGIC =====
 def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
     progress_msg_id = None
     last_update_time = 0
     UPDATE_INTERVAL = 0.5
     TIMEOUT = 30
+
     try:
+        # ✅ Top 5 search result
         info_json = subprocess.check_output(
-            ["yt-dlp", "--no-playlist", "--print-json", "--skip-download", f"ytsearch1:{query}"], text=True
+            ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch5:{query}"], text=True
         )
-        data = json.loads(info_json)
-        title = data.get("title", "Unknown")
-        bot.send_message(chat_id, f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
+        data_list = [json.loads(line) for line in info_json.strip().split("\n")]
+        video_found = False
+        for data in data_list:
+            title = data.get("title","Unknown")
+            url = data.get("webpage_url")
+            if not url: continue
 
-        out = os.path.join(tmpdir, "%(title)s.%(ext)s")
-        cmd = [
-            "yt-dlp", "--no-playlist", "--extract-audio", "--audio-format", "mp3",
-            "--audio-quality", "0", "--quiet", "--output", out, f"ytsearch1:{query}"
-        ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        start_time = time.time()
-        while proc.poll() is None:
-            if stop_event.is_set():
-                proc.terminate()
-                bot.send_message(chat_id, "❌ Download stopped")
-                return
-            if time.time() - start_time > TIMEOUT:
-                proc.terminate()
-                bot.send_message(chat_id, "⏱️ Download timeout")
-                return
-            now = time.time()
-            if now - last_update_time > UPDATE_INTERVAL:
-                dots = "." * int(((now * 2) % 4) + 1)
-                msg_text = f"📥 Downloading{dots}"
-                if not progress_msg_id:
-                    m = bot.send_message(chat_id, msg_text)
-                    progress_msg_id = m.message_id
+            bot.send_message(chat_id, f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
+            out = os.path.join(tmpdir, "%(title)s.%(ext)s")
+            cmd = [
+                "yt-dlp","--no-playlist","--extract-audio","--audio-format","mp3",
+                "--audio-quality","0","--quiet","--output",out,url
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            start_time = time.time()
+            while proc.poll() is None:
+                if stop_event.is_set():
+                    proc.terminate()
+                    bot.send_message(chat_id,"❌ Download stopped")
+                    return
+                if time.time() - start_time > TIMEOUT:
+                    proc.terminate()
+                    break
+                now = time.time()
+                if now - last_update_time > UPDATE_INTERVAL:
+                    dots = "." * int(((now*2)%4)+1)
+                    msg_text = f"📥 Downloading{dots}"
+                    if not progress_msg_id:
+                        m = bot.send_message(chat_id,msg_text)
+                        progress_msg_id = m.message_id
+                    else:
+                        try: bot.edit_message_text(msg_text, chat_id, progress_msg_id)
+                        except: pass
+                    last_update_time = now
+                time.sleep(0.3)
+
+            files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
+            if files:
+                fpath = os.path.join(tmpdir, files[0])
+                if os.path.getsize(fpath) > MAX_FILESIZE:
+                    bot.send_message(chat_id,"⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
+                    return
+                caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
+                thumb_url = data.get("thumbnail")
+                if thumb_url:
+                    try:
+                        img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
+                        thumb_path = os.path.join(tmpdir,"thumb.jpg")
+                        img.save(thumb_path)
+                        with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
+                            bot.send_audio(chat_id,aud,caption=caption,thumb=th,parse_mode="Markdown")
+                    except:
+                        with open(fpath,"rb") as aud:
+                            bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
                 else:
-                    try: bot.edit_message_text(msg_text, chat_id, progress_msg_id)
-                    except: pass
-                last_update_time = now
-            time.sleep(0.3)
+                    with open(fpath,"rb") as aud:
+                        bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+                bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
+                video_found = True
+                break
 
-        files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
-        if not files:
-            bot.send_message(chat_id, "🚫 ဖိုင် မတွေ့ပါ။")
-            return
-        fpath = os.path.join(tmpdir, files[0])
-        if os.path.getsize(fpath) > MAX_FILESIZE:
-            bot.send_message(chat_id, "⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
-            return
-
-        caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
-        thumb_url = data.get("thumbnail")
-        try:
-            if thumb_url:
-                img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
-                thumb_path = os.path.join(tmpdir, "thumb.jpg")
-                img.save(thumb_path)
-                with open(fpath, "rb") as aud, open(thumb_path, "rb") as th:
-                    bot.send_audio(chat_id, aud, caption=caption, thumb=th, parse_mode="Markdown")
-            else:
-                with open(fpath, "rb") as aud:
-                    bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
-            bot.send_message(chat_id, "✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
-        except:
-            with open(fpath, "rb") as aud:
-                bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
-            bot.send_message(chat_id, "✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
+        if not video_found:
+            bot.send_message(chat_id,"🚫 ဖိုင်မတွေ့ပါ၊ အခြား keyword ဖြင့်စမ်းကြည့်ပါ။")
 
     except Exception as e:
-        bot.send_message(chat_id, f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
+        bot.send_message(chat_id,f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
