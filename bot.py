@@ -10,6 +10,7 @@ import requests
 
 # ===== KEEP ALIVE SERVER =====
 app = Flask(__name__)
+
 @app.route('/')
 def home():
     return "✅ Music 4U Bot is Alive!"
@@ -110,20 +111,15 @@ def download_and_send(chat_id, query, stop_event):
     progress_msg_id = None
     last_update_time = 0
     UPDATE_INTERVAL = 0.5
-    TIMEOUT = 60
+    TIMEOUT = 60  # increased timeout
 
     try:
-        # ✅ Search top 5 videos
         info_json = subprocess.check_output(
             ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch5:{query}"], text=True
         )
         data_list = [json.loads(line) for line in info_json.strip().split("\n")]
         video_found = False
-
         for data in data_list:
-            if stop_event.is_set():
-                break
-
             title = data.get("title","Unknown")
             url = data.get("webpage_url")
             if not url: continue
@@ -136,7 +132,6 @@ def download_and_send(chat_id, query, stop_event):
             ]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             start_time = time.time()
-
             while proc.poll() is None:
                 if stop_event.is_set():
                     proc.terminate()
@@ -163,25 +158,25 @@ def download_and_send(chat_id, query, stop_event):
                 fpath = os.path.join(tmpdir, files[0])
                 if os.path.getsize(fpath) > MAX_FILESIZE:
                     bot.send_message(chat_id,"⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
-                    continue
-
+                    return
                 caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
                 thumb_url = data.get("thumbnail")
-                try:
-                    if thumb_url:
+                if thumb_url:
+                    try:
                         img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
                         thumb_path = os.path.join(tmpdir,"thumb.jpg")
                         img.save(thumb_path)
                         with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
                             bot.send_audio(chat_id,aud,caption=caption,thumb=th,parse_mode="Markdown")
-                    else:
+                    except:
                         with open(fpath,"rb") as aud:
                             bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
-                    bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
-                    video_found = True
-                    break
-                except Exception as e:
-                    continue
+                else:
+                    with open(fpath,"rb") as aud:
+                        bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+                bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
+                video_found = True
+                break
 
         if not video_found:
             bot.send_message(chat_id,"🚫 ဖိုင်မတွေ့ပါ၊ အခြား keyword ဖြင့်စမ်းကြည့်ပါ။")
@@ -191,6 +186,13 @@ def download_and_send(chat_id, query, stop_event):
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-# ===== RUN BOT =====
-print("✅ Bot is running...")
-bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+# ===== RUN BOT THREAD =====
+def start_bot():
+    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+
+threading.Thread(target=start_bot, daemon=True).start()
+print("✅ Bot is running and ready!")
+
+# ===== START SERVER =====
+if __name__ == "__main__":
+    keep_alive()
