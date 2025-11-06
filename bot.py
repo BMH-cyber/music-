@@ -2,7 +2,7 @@ import telebot, threading, subprocess, tempfile, os, time, json, shutil
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from queue import Queue
 from flask import Flask
@@ -29,7 +29,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DOWNLOAD_DIR = Path("downloads_music4u")
 MAX_FILESIZE = 30 * 1024 * 1024
-START_TIME = datetime.utcnow()
+START_TIME = datetime.now(timezone.utc)
 
 bot = telebot.TeleBot(TOKEN)
 DOWNLOAD_DIR.mkdir(exist_ok=True)
@@ -43,18 +43,14 @@ DATA_FILE = Path("music4u_subscribers.json")
 def load_subscribers():
     global subscribers
     if DATA_FILE.exists():
-        try:
-            subscribers = set(json.loads(DATA_FILE.read_text()))
-        except:
-            subscribers = set()
-
+        try: subscribers = set(json.loads(DATA_FILE.read_text()))
+        except: subscribers = set()
 threading.Thread(target=load_subscribers, daemon=True).start()
 
 def save_subs():
     DATA_FILE.write_text(json.dumps(list(subscribers)))
 
-def is_admin(uid): 
-    return uid == ADMIN_ID
+def is_admin(uid): return uid == ADMIN_ID
 
 # ===== COMMANDS =====
 @bot.message_handler(commands=['start','help'])
@@ -70,6 +66,36 @@ def start(msg):
         "\n⚡ Fast • Reliable • 24/7 Online"
     ), parse_mode="Markdown")
 
+@bot.message_handler(commands=['about'])
+def about(msg):
+    bot.reply_to(msg, (
+        "🎵 *Music 4U Bot*\n"
+        "Created by ❤️ Developer\n"
+        "Powered by `yt-dlp`\n24/7 Cloud Hosted\n\n"
+        "Commands:\n• /play <သီချင်း>\n• /stop\n• /subscribe\n• /unsubscribe\n• /status\n• /about"
+    ), parse_mode="Markdown")
+
+@bot.message_handler(commands=['status'])
+def status(msg):
+    uptime = datetime.now(timezone.utc) - START_TIME
+    bot.reply_to(msg, f"🕐 *Uptime:* {str(uptime).split('.')[0]}\n👥 Subscribers: {len(subscribers)}", parse_mode="Markdown")
+
+@bot.message_handler(commands=['subscribe'])
+def sub(msg):
+    subscribers.add(msg.from_user.id)
+    save_subs()
+    bot.reply_to(msg, "✅ Broadcast မက်ဆေ့ချ်များ ရရှိရန် သဘောတူပြီးပါပြီ။")
+
+@bot.message_handler(commands=['unsubscribe'])
+def unsub(msg):
+    if msg.from_user.id in subscribers:
+        subscribers.remove(msg.from_user.id)
+        save_subs()
+        bot.reply_to(msg, "❌ Broadcast မက်ဆေ့ချ်များ ရပ်လိုက်ပါသည်။")
+    else:
+        bot.reply_to(msg, "သင်သည် စာရင်းတွင်မပါသေးပါ။")
+
+# ===== PLAY / STOP =====
 @bot.message_handler(commands=['play'])
 def play(msg):
     chat_id = msg.chat.id
@@ -112,104 +138,70 @@ def process_queue(chat_id):
 # ===== CORE LOGIC =====
 def download_and_send(chat_id, query, stop_event):
     tmpdir = tempfile.mkdtemp(prefix="music4u_")
-    progress_msg_id = None
-    last_update_time = 0
-    UPDATE_INTERVAL = 0.5
-    TIMEOUT = 60
-
     try:
-        # 🔧 Added flags to suppress YouTube SABR streaming warnings
         info_json = subprocess.check_output(
-            [
-                "yt-dlp",
-                "--no-playlist",
-                "--ignore-errors",
-                "--no-warnings",
-                "--print-json",
-                "--skip-download",
-                f"ytsearch5:{query}"
-            ],
+            ["yt-dlp","--no-playlist","--print-json","--skip-download",f"ytsearch5:{query}"],
             text=True
         )
-
-        data_list = [json.loads(line) for line in info_json.strip().split("\n") if line.strip()]
+        data_list = [json.loads(line) for line in info_json.strip().split("\n")]
         video_found = False
-
         for data in data_list:
-            title = data.get("title", "Unknown")
+            title = data.get("title","Unknown")
             url = data.get("webpage_url")
-            if not url:
-                continue
+            if not url: continue
 
             bot.send_message(chat_id, f"🔎 `{title}` ကိုရှာနေပါသည်…", parse_mode="Markdown")
             out = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            cmd = [
-                "yt-dlp", "--no-playlist", "--ignore-errors", "--no-warnings",
-                "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
-                "--quiet", "--output", out, url
-            ]
+            cmd = ["yt-dlp","--no-playlist","--extract-audio","--audio-format","mp3","--audio-quality","0","--quiet","--output",out,url]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            start_time = time.time()
             while proc.poll() is None:
                 if stop_event.is_set():
                     proc.terminate()
-                    bot.send_message(chat_id, "❌ Download stopped")
+                    bot.send_message(chat_id,"❌ Download ရပ်လိုက်ပါသည်။")
                     return
-                if time.time() - start_time > TIMEOUT:
-                    proc.terminate()
-                    break
-                now = time.time()
-                if now - last_update_time > UPDATE_INTERVAL:
-                    dots = "." * int(((now * 2) % 4) + 1)
-                    msg_text = f"📥 Downloading{dots}"
-                    if not progress_msg_id:
-                        m = bot.send_message(chat_id, msg_text)
-                        progress_msg_id = m.message_id
-                    else:
-                        try:
-                            bot.edit_message_text(msg_text, chat_id, progress_msg_id)
-                        except:
-                            pass
-                    last_update_time = now
                 time.sleep(0.3)
 
             files = [f for f in os.listdir(tmpdir) if f.endswith(".mp3")]
             if files:
                 fpath = os.path.join(tmpdir, files[0])
                 if os.path.getsize(fpath) > MAX_FILESIZE:
-                    bot.send_message(chat_id, "⚠️ ဖိုင်အရွယ်အစားကြီးနေသည်။ Telegram မှ ပို့လို့မရပါ။")
+                    bot.send_message(chat_id,"⚠️ ဖိုင်အရွယ်အစားကြီးနေပါသည်။ Telegram မှ ပို့လို့မရပါ။")
                     return
                 caption = f"🎶 {title}\n\n_Music 4U မှ ပေးပို့နေပါသည်_ 🎧"
                 thumb_url = data.get("thumbnail")
                 if thumb_url:
                     try:
                         img = Image.open(BytesIO(requests.get(thumb_url, timeout=5).content))
-                        thumb_path = os.path.join(tmpdir, "thumb.jpg")
+                        thumb_path = os.path.join(tmpdir,"thumb.jpg")
                         img.save(thumb_path)
-                        with open(fpath, "rb") as aud, open(thumb_path, "rb") as th:
-                            bot.send_audio(chat_id, aud, caption=caption, thumb=th, parse_mode="Markdown")
+                        with open(fpath,"rb") as aud, open(thumb_path,"rb") as th:
+                            bot.send_audio(chat_id,aud,caption=caption,thumb=th,parse_mode="Markdown")
                     except:
-                        with open(fpath, "rb") as aud:
-                            bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
+                        with open(fpath,"rb") as aud:
+                            bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
                 else:
-                    with open(fpath, "rb") as aud:
-                        bot.send_audio(chat_id, aud, caption=caption, parse_mode="Markdown")
-
-                bot.send_message(chat_id, "✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
+                    with open(fpath,"rb") as aud:
+                        bot.send_audio(chat_id,aud,caption=caption,parse_mode="Markdown")
+                bot.send_message(chat_id,"✅ သီချင်း ပေးပို့ပြီးပါပြီ 🎧")
                 video_found = True
                 break
 
         if not video_found:
-            bot.send_message(chat_id, "🚫 ဖိုင်မတွေ့ပါ၊ အခြား keyword ဖြင့်စမ်းကြည့်ပါ။")
+            bot.send_message(chat_id,"🚫 ဖိုင်မတွေ့ပါ၊ အခြား keyword ဖြင့်စမ်းကြည့်ပါ။")
 
     except Exception as e:
-        bot.send_message(chat_id, f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
+        bot.send_message(chat_id,f"❌ အမှားတစ်ခုဖြစ်ပါသည်: {e}")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 # ===== RUN BOT THREAD =====
 def start_bot():
-    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+        except Exception as e:
+            print(f"Bot crashed: {e}")
+            time.sleep(5)
 
 threading.Thread(target=start_bot, daemon=True).start()
 print("✅ Bot is running and ready!")
