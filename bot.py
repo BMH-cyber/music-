@@ -1,15 +1,15 @@
-# ===== music_bot_v19.py =====
-import os, sys, subprocess, asyncio, tempfile, random
+# ===== music_bot_v20_fast.py =====
+import os, sys, subprocess, tempfile, random, threading
+from datetime import datetime
+
 import telebot
 from telebot import types
 from dotenv import load_dotenv
-from datetime import datetime
-import yt_dlp
-import aiohttp
 from flask import Flask
+import yt_dlp
 
 # ===== AUTO INSTALL =====
-REQUIRED = ["pyTelegramBotAPI", "yt-dlp", "aiohttp", "python-dotenv", "flask"]
+REQUIRED = ["pyTelegramBotAPI", "yt-dlp", "python-dotenv", "flask"]
 for pkg in REQUIRED:
     try:
         __import__(pkg.split("-")[0])
@@ -22,9 +22,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-PORT = random.randint(2000, 9999)
+PORT = int(os.environ.get("PORT", random.randint(2000, 9999)))
 MAX_FILESIZE_MB = 30
-
 START_TIME = datetime.utcnow()
 
 # ===== COMMAND: /start =====
@@ -48,23 +47,11 @@ def handle_song_request(message):
     if not query:
         return
     bot.reply_to(message, f"🔍 '{query}' ကိုရှာနေပါတယ်... ခဏစောင့်ပါ။")
+    
+    threading.Thread(target=download_and_send_song, args=(message, query)).start()
 
-    asyncio.run(download_and_send_song(message, query))
-
-async def download_and_send_song(message, query):
+def download_and_send_song(message, query):
     try:
-        # YouTube ရှာဖွေခြင်း
-        search_url = f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(search_url) as resp:
-                html = await resp.text()
-        video_ids = [part.split('"')[0] for part in html.split('watch?v=')[1:]]
-        if not video_ids:
-            bot.reply_to(message, "❌ သီချင်းမတွေ့ပါ။ ထပ်စမ်းပါ။")
-            return
-        video_url = f"https://www.youtube.com/watch?v={video_ids[0]}"
-
-        # Download temp dir
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts = {
                 "format": "bestaudio/best",
@@ -76,34 +63,38 @@ async def download_and_send_song(message, query):
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": "192",
+                    "preferredquality": "128",  # smaller file, faster
                 }],
             }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
 
-            # Get mp3 path
+            # ytsearch1: automatically search & download first result
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"ytsearch1:{query}"])
+
+            # Get mp3 file
+            mp3_file = None
             for f in os.listdir(tmpdir):
                 if f.endswith(".mp3"):
-                    filepath = os.path.join(tmpdir, f)
+                    mp3_file = os.path.join(tmpdir, f)
                     break
-            else:
+
+            if not mp3_file:
                 bot.reply_to(message, "❌ MP3 ဖိုင်မတွေ့ပါ။")
                 return
 
-            # File size check
-            if os.path.getsize(filepath) > MAX_FILESIZE_MB * 1024 * 1024:
+            # Check size
+            if os.path.getsize(mp3_file) > MAX_FILESIZE_MB * 1024 * 1024:
                 bot.reply_to(message, "❌ ဖိုင်အရွယ်အစား 30MB ကျော်နေပါတယ်။")
                 return
 
             # Send audio
-            with open(filepath, "rb") as audio:
+            with open(mp3_file, "rb") as audio:
                 bot.send_audio(message.chat.id, audio, caption=f"🎵 {query}")
 
     except Exception as e:
         bot.reply_to(message, f"❌ အမှားတစ်ခုဖြစ်ခဲ့ပါ: {e}")
 
-# ===== FLASK KEEP ALIVE (RAILWAY / TERMUX PORT SAFE) =====
+# ===== FLASK KEEP ALIVE (RAILWAY / REPLIT SAFE) =====
 @app.route('/')
 def home():
     return "Bot is running!"
@@ -113,7 +104,6 @@ def run_flask():
 
 # ===== START BOT =====
 if __name__ == "__main__":
-    import threading
     threading.Thread(target=run_flask).start()
     print(f"✅ Bot is running on port {PORT}")
     bot.infinity_polling(skip_pending=True, timeout=60)
