@@ -5,4 +5,4 @@ requests
 flask
 python-dotenv
 youtube_dl
-youtubesearchpython
+aiohttp
