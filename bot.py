@@ -9,6 +9,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# ===== Clear any existing webhook to avoid 409 conflict =====
+bot.remove_webhook()
+
 # ===== Start message (multiline) =====
 START_MESSAGE = """ညီကိုတို့အတွက် အပန်းဖြေရာ 🥵
 
@@ -49,5 +52,5 @@ def handle_start(message):
     threading.Thread(target=send_start_message, args=(message,)).start()
 
 # ===== Run Bot (fast polling) =====
-print("✅ Bot is running...")
+print("✅ Bot is running... (Polling mode)")
 bot.polling(none_stop=True, interval=0, timeout=20)
