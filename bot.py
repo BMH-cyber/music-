@@ -24,17 +24,14 @@ START_MESSAGE = """ညီကိုတို့အတွက် အပန်းဖ
 # ===== Function to send message with buttons =====
 def send_start_message(message):
     markup = telebot.types.InlineKeyboardMarkup()
-    # First row
     markup.add(
         telebot.types.InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
         telebot.types.InlineKeyboardButton("🎵 MV Channel", url="https://t.me/+CziNFfkLJSRjNjBl")
     )
-    # Second row
     markup.add(
         telebot.types.InlineKeyboardButton("💬 Main Chat", url="https://t.me/+RqYCRdFavhM0NTc1"),
         telebot.types.InlineKeyboardButton("💭 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
     )
-    # Third row
     markup.add(
         telebot.types.InlineKeyboardButton("🌐 Join All Groups", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
     )
@@ -52,5 +49,5 @@ def handle_start(message):
     threading.Thread(target=send_start_message, args=(message,)).start()
 
 # ===== Run Bot (fast polling) =====
-print("✅ Bot is running... (Polling mode)")
+print("✅ Bot is running (Polling mode, conflict-safe)")
 bot.polling(none_stop=True, interval=0, timeout=20)
