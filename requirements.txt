@@ -8,3 +8,4 @@ youtube_dl
 aiohttp
 gunicorn
 googlesearch-python
+youtube-search-python
