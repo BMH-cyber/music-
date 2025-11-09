@@ -8,6 +8,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import urllib.parse
+import threading
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -24,6 +25,8 @@ PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
 APP_URL = os.getenv("APP_URL")
+INSTANCE_REFRESH_HOURS = float(os.getenv("INSTANCE_REFRESH_HOURS", 6))  # default 6 hours
+INSTANCE_REFRESH_INTERVAL = INSTANCE_REFRESH_HOURS * 3600  # seconds
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -43,14 +46,13 @@ INVIDIOUS_INSTANCES = [
     "https://invidious.kavin.rocks"
 ]
 
-# Optional: Fetch live instances from GitHub and update INVIDIOUS_INSTANCES
+# Fetch live instances from GitHub
 def fetch_live_invidious_instances():
     url = "https://docs.invidious.io/instances.json"
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        # Filter HTTPS instances only
         instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
         if instances:
             global INVIDIOUS_INSTANCES
@@ -61,10 +63,16 @@ def fetch_live_invidious_instances():
         print("❌ Failed to fetch live instances:", e)
         return []
 
-# Call once at startup to refresh
-fetch_live_invidious_instances()
+# Background thread to refresh instances periodically
+def periodic_instance_refresh():
+    while True:
+        fetch_live_invidious_instances()
+        time.sleep(INSTANCE_REFRESH_INTERVAL)
 
+# Start the background refresh thread
+threading.Thread(target=periodic_instance_refresh, daemon=True).start()
 
+# ===== CACHE HELPERS =====
 def load_cache():
     if CACHE_FILE.exists():
         try:
@@ -109,7 +117,7 @@ def ytdlp_search_sync(query, use_proxy=True):
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            safe_query = urllib.parse.quote(query)  # Unicode safe
+            safe_query = urllib.parse.quote(query)
             info = ydl.extract_info(f"ytsearch5:{safe_query}", download=False)
             return info.get("entries") or []
     except Exception as e:
@@ -257,6 +265,8 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
+    # Fetch once at startup
+    fetch_live_invidious_instances()
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
