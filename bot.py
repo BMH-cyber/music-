@@ -10,12 +10,12 @@ from flask import Flask, request
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Railway app URL + /bot
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Ex: https://your-app.up.railway.app/bot
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
 # ===== TELEBOT SETUP =====
-BOT = telebot.TeleBot(TOKEN, parse_mode=None, threaded=True)
+BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
@@ -206,29 +206,25 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== FLASK APP for Webhook / Keepalive =====
-app = Flask("music4u_keepalive")
+# ===== FLASK APP (Webhook) =====
+app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "✅ Music4U bot is alive"
-
-@app.route(f"/bot", methods=["POST"])
+@app.route("/bot", methods=["POST"])
 def telegram_webhook():
-    if request.headers.get("content-type") == "application/json":
-        json_string = request.get_data().decode("utf-8")
-        update = telebot.types.Update.de_json(json_string)
-        BOT.process_new_updates([update])
-        return "OK", 200
-    else:
-        return "Invalid request", 403
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    BOT.process_new_updates([update])
+    return "OK", 200
 
 # ===== SET WEBHOOK =====
-if WEBHOOK_URL:
-    BOT.remove_webhook()
-    BOT.set_webhook(url=WEBHOOK_URL)
+def set_webhook():
+    if WEBHOOK_URL:
+        BOT.remove_webhook()
+        BOT.set_webhook(url=WEBHOOK_URL)
+        print("✅ Webhook set:", WEBHOOK_URL)
 
-# ===== RUN BOT (Polling fallback if webhook not set) =====
+# ===== MAIN =====
 if __name__ == "__main__":
-    print("✅ Music4U bot starting...")
-    BOT.infinity_polling(timeout=60, long_polling_timeout=30)
+    set_webhook()
+    print("✅ Music4U bot running (Webhook mode)...")
+    app.run(host="0.0.0.0", port=PORT)
