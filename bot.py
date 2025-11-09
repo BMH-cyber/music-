@@ -6,6 +6,7 @@ import tempfile
 import shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -129,6 +130,9 @@ def check_ffmpeg():
         return False
 
 def download_to_mp3(video_url):
+    """
+    ORIGINAL function – keeps mp3 conversion
+    """
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
     opts = {
@@ -156,7 +160,45 @@ def download_to_mp3(video_url):
         return None
     return None
 
-def download_and_send(chat_id, video_url):
+# ===== INTEGRATED FAST + MP3 DOWNLOAD =====
+def download_and_send_integrated(chat_id, video_url):
+    """
+    1. Try fast streaming download first (memory, no conversion)
+    2. If fails or too big, fallback to original mp3 download
+    """
+    BOT.send_message(chat_id, "⚡ Fast download starting...")
+    
+    temp_buffer = BytesIO()
+    opts = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "postprocessors": []
+    }
+    if YTDLP_PROXY:
+        opts["proxy"] = YTDLP_PROXY
+
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(video_url)
+            url = info.get('url')
+            if url:
+                r = requests.get(url, stream=True)
+                for chunk in r.iter_content(chunk_size=1024*1024):
+                    temp_buffer.write(chunk)
+                size = temp_buffer.tell()
+                temp_buffer.seek(0)
+                if size > MAX_TELEGRAM_FILE:
+                    raise Exception(f"⚠️ Fast file too big ({round(size/1024/1024,2)} MB)")
+                BOT.send_audio(chat_id, temp_buffer, title=info.get("title"))
+                return
+            else:
+                raise Exception("No audio URL found for fast download.")
+    except Exception as e:
+        BOT.send_message(chat_id, f"⚠️ Fast download failed: {str(e)}\n⏳ Trying original mp3 download...")
+
+    # Fallback to original mp3
     mp3_file = download_to_mp3(video_url)
     if mp3_file:
         size = os.path.getsize(mp3_file)
@@ -167,7 +209,7 @@ def download_and_send(chat_id, video_url):
                 BOT.send_audio(chat_id, f)
         shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
     else:
-        BOT.send_message(chat_id, "❌ Download failed.")
+        BOT.send_message(chat_id, "❌ Download failed completely.")
 
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
@@ -208,7 +250,7 @@ def callback_download(call: CallbackQuery):
     chat_id = call.message.chat.id
     video_url = call.data.split("::", 1)[1]
     BOT.answer_callback_query(call.id, "Downloading your song...")
-    THREAD_POOL.submit(download_and_send, chat_id, video_url)
+    THREAD_POOL.submit(download_and_send_integrated, chat_id, video_url)
 
 # ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
