@@ -6,7 +6,10 @@ from pytube import YouTube
 from youtubesearchpython import VideosSearch
 
 # ====== Bot Setup ======
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # .env မှာ BOT_TOKEN ထည့်ထားရမယ်
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise Exception("BOT_TOKEN မထည့်ထားပါ")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 executor = ThreadPoolExecutor(max_workers=3)
 
@@ -15,7 +18,7 @@ executor = ThreadPoolExecutor(max_workers=3)
 def start(message):
     bot.send_message(message.chat.id, "မင်္ဂလာပါ! သီချင်းနာမည်ရိုက်ပြီး ပို့ပါ။")
 
-# ====== Download & Send Audio Function ======
+# ====== Download & Send Audio ======
 def download_and_send(message, query):
     status_msg = bot.send_message(message.chat.id, f"'{query}' သီချင်း download လုပ်နေပါသည်...")
 
