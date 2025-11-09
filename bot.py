@@ -1,14 +1,15 @@
-import os, sys, json, time, asyncio, threading, tempfile, shutil
+import os, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
-from flask import Flask
+from flask import Flask, request
 
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
+APP_URL = os.getenv("APP_URL")  # ex: https://yourapp.up.railway.app
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
@@ -179,24 +180,24 @@ def process_queue(chat_id):
     finally:
         ACTIVE.pop(chat_id, None)
 
-# ===== BOT COMMANDS =====
+# ===== BOT HANDLERS =====
 @BOT.message_handler(commands=["start", "help"])
-def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
+def cmd_start(message):
+    BOT.reply_to(message, "🎶 Welcome to Music4U — Type song name to download as MP3.")
 
 @BOT.message_handler(commands=["stop"])
-def cmd_stop(m):
-    chat_id = m.chat.id
+def cmd_stop(message):
+    chat_id = message.chat.id
     CHAT_QUEUE[chat_id] = []
     ACTIVE.pop(chat_id, None)
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
 @BOT.message_handler(func=lambda m: True)
-def on_message(m):
-    chat_id = m.chat.id
-    text = (m.text or "").strip()
+def on_message(message):
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
     if not text or text.startswith("/"):
-        BOT.reply_to(m, "Use /start or type a song name.")
+        BOT.reply_to(message, "Use /start or type a song name.")
         return
     if chat_id not in CHAT_QUEUE:
         CHAT_QUEUE[chat_id] = []
@@ -205,17 +206,23 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (Flask) =====
+# ===== FLASK + WEBHOOK =====
 app = Flask("music4u_keepalive")
 
-@app.route("/")
-def home():
-    return "✅ Music4U bot is alive"
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    BOT.process_new_updates([update])
+    return "!", 200
 
-# ===== MAIN =====
-def run_bot():
-    BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+@app.route("/")
+def index():
+    return "✅ Music4U bot is running", 200
 
 if __name__ == "__main__":
-    threading.Thread(target=run_bot, daemon=True).start()
+    # Telegram webhook set (one-time)
+    BOT.remove_webhook()
+    BOT.set_webhook(url=f"{APP_URL}/{TOKEN}")
+    print("✅ Music4U bot webhook set and running")
     app.run(host="0.0.0.0", port=PORT)
