@@ -8,7 +8,6 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import urllib.parse
-import threading
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -35,7 +34,6 @@ CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 
 # ===== INVIDIOUS INSTANCES =====
-# Default fallback instances
 INVIDIOUS_INSTANCES = [
     "https://yewtu.be",
     "https://yewtu.cafe",
@@ -44,7 +42,39 @@ INVIDIOUS_INSTANCES = [
     "https://invidious.kavin.rocks"
 ]
 
-# ===== CACHE FUNCTIONS =====
+# ===== FETCH LIVE INSTANCES =====
+def fetch_live_invidious_instances():
+    url = "https://docs.invidious.io/instances.json"  # GitHub URL
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        instances = []
+        for inst in data:
+            if isinstance(inst, dict):
+                if inst.get("type") == "https":
+                    instances.append(inst["uri"])
+            elif isinstance(inst, str):
+                if inst.startswith("https://"):
+                    instances.append(inst)
+        if instances:
+            global INVIDIOUS_INSTANCES
+            INVIDIOUS_INSTANCES = instances
+            print(f"✅ Fetched {len(instances)} live Invidious instances")
+        return instances
+    except Exception as e:
+        print("❌ Failed to fetch live instances:", e)
+        return []
+
+# Refresh instances every 30 minutes
+async def auto_refresh_instances():
+    while True:
+        fetch_live_invidious_instances()
+        await asyncio.sleep(1800)  # 30 minutes
+
+# Call once at startup
+fetch_live_invidious_instances()
+
 def load_cache():
     if CACHE_FILE.exists():
         try:
@@ -76,7 +106,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== YT-DLP SEARCH =====
+# ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
@@ -96,7 +126,6 @@ def ytdlp_search_sync(query, use_proxy=True):
         print("yt-dlp search error:", e)
         return []
 
-# ===== INVIDIOUS SEARCH =====
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
@@ -113,7 +142,6 @@ async def invidious_search(query, session, timeout=5):
             continue
     return []
 
-# ===== FIND VIDEOS =====
 async def find_videos_for_query(query):
     cached = cache_get(query)
     if cached:
@@ -132,7 +160,7 @@ async def find_videos_for_query(query):
             cache_put(query, v)
     return videos
 
-# ===== DOWNLOAD MP3 =====
+# ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
     try:
         subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -223,7 +251,7 @@ def callback_download(call: CallbackQuery):
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
 
-# ===== FLASK SERVER =====
+# ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -237,27 +265,10 @@ def webhook():
     BOT.process_new_updates([update])
     return "ok", 200
 
-# ===== INVIDIOUS REFRESH THREAD =====
-def refresh_invidious_instances_periodically(interval=1800):  # 30 min
-    while True:
-        try:
-            url = "https://api.invidious.io/instances.json"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
-            if instances:
-                global INVIDIOUS_INSTANCES
-                INVIDIOUS_INSTANCES = instances
-                print(f"🔄 Refreshed {len(instances)} Invidious instances")
-        except Exception as e:
-            print("❌ Failed to refresh instances:", e)
-        time.sleep(interval)
-
-threading.Thread(target=refresh_invidious_instances_periodically, daemon=True).start()
-
 # ===== MAIN =====
 if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.create_task(auto_refresh_instances())
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
