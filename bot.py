@@ -1,4 +1,4 @@
-import os, sys, json, time, asyncio, threading, tempfile, shutil
+import os, time, json, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
@@ -182,7 +182,7 @@ def process_queue(chat_id):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as MP3.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -205,18 +205,20 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (for Railway) =====
-app = Flask("music4u_keepalive")
+# ===== KEEP ALIVE (Flask) =====
+app = Flask(__name__)
+
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
+def keep_alive():
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Start Flask server in a thread for keep-alive
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+    keep_alive()
     print("✅ Music4U bot running...")
-    # Start polling (single instance, no 409 conflict)
     while True:
         try:
             BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
