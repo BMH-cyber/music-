@@ -15,7 +15,6 @@ from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
 import subprocess
-from googlesearch import search  # pip install google
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -28,8 +27,6 @@ APP_URL = os.getenv("APP_URL")  # https://your-app.up.railway.app
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
-ACTIVE = {}
-CHAT_QUEUE = {}
 
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
@@ -114,27 +111,45 @@ async def invidious_search(query, session, timeout=5):
             continue
     return None
 
+def google_search_sync(query):
+    try:
+        from googlesearch import search  # pip install googlesearch-python
+        for url in search(query, num_results=3):
+            if "youtube.com/watch" in url or "soundcloud.com" in url:
+                return url
+    except:
+        return None
+    return None
+
 async def find_video_for_query(query):
     cached = cache_get(query)
     if cached:
         return cached
+
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
+
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
+
         for r in results:
             if isinstance(r, dict) and r.get("webpage_url"):
                 cache_put(query, r)
                 return r
-    # Direct search via Google if not found
-    try:
-        for url in search(f"{query} mp3", num_results=3):
-            if "youtube.com/watch" in url or "soundcloud.com" in url:
-                cache_put(query, {"title": query, "webpage_url": url, "id": url})
-                return {"title": query, "webpage_url": url, "id": url}
-    except:
-        pass
+
+    # fallback Google search
+    google_url = await loop.run_in_executor(None, google_search_sync, query)
+    if google_url:
+        cache_put(query, {"title": query, "webpage_url": google_url, "id": "fallback"})
+        return {"title": query, "webpage_url": google_url, "id": "fallback"}
+
+    # direct YTDLP search without proxy
+    direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
+    if direct_res and direct_res.get("webpage_url"):
+        cache_put(query, direct_res)
+        return direct_res
+
     return None
 
 # ===== DOWNLOAD AUDIO =====
@@ -179,8 +194,9 @@ def process_queue(chat_id, query):
     asyncio.set_event_loop(loop)
     video_info = loop.run_until_complete(find_video_for_query(query))
     if not video_info:
-        BOT.send_message(chat_id, f"❌ Could not find: {query}")
+        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
+
     mp3_file = download_to_mp3(video_info["webpage_url"])
     if mp3_file:
         size = os.path.getsize(mp3_file)
@@ -191,7 +207,7 @@ def process_queue(chat_id, query):
                 BOT.send_audio(chat_id, f, title=video_info["title"])
         shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
     else:
-        BOT.send_message(chat_id, f"❌ Could not download: {query}")
+        BOT.send_message(chat_id, f"❌ Download failed: {query}")
 
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
@@ -229,7 +245,6 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Set webhook
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
