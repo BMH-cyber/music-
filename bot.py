@@ -6,6 +6,8 @@ import tempfile
 import shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+import subprocess
+import urllib.parse
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -14,7 +16,6 @@ import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
-import subprocess
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -31,10 +32,13 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
+
 INVIDIOUS_INSTANCES = [
     "https://yewtu.be",
     "https://yewtu.cafe",
-    "https://invidious.privacydev.net"
+    "https://invidious.snopyta.org",
+    "https://vid.puffyan.us",
+    "https://invidious.kavin.rocks"
 ]
 
 def load_cache():
@@ -81,9 +85,11 @@ def ytdlp_search_sync(query, use_proxy=True):
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch5:{query}", download=False)
+            safe_query = urllib.parse.quote(query)  # Unicode safe
+            info = ydl.extract_info(f"ytsearch5:{safe_query}", download=False)
             return info.get("entries") or []
-    except:
+    except Exception as e:
+        print("yt-dlp search error:", e)
         return []
 
 async def invidious_search(query, session, timeout=5):
@@ -107,18 +113,20 @@ async def find_videos_for_query(query):
     if cached:
         return [cached]
     loop = asyncio.get_event_loop()
+    # yt-dlp search in thread
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
+    # Invidious search async
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-        videos = []
-        for r in results:
-            if isinstance(r, list):
-                videos.extend(r)
-        for v in videos:
-            if v.get("webpage_url"):
-                cache_put(query, v)
-        return videos
+    videos = []
+    for r in results:
+        if isinstance(r, list):
+            videos.extend(r)
+    for v in videos:
+        if v.get("webpage_url"):
+            cache_put(query, v)
+    return videos
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -157,6 +165,7 @@ def download_to_mp3(video_url):
     return None
 
 def download_and_send(chat_id, video_url):
+    BOT.send_chat_action(chat_id, "upload_audio")
     mp3_file = download_to_mp3(video_url)
     if mp3_file:
         size = os.path.getsize(mp3_file)
