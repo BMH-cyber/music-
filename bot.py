@@ -217,6 +217,8 @@ def cmd_stop(m):
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
 # ===== SEARCH & INLINE BUTTONS =====
+from urllib.parse import quote, unquote
+
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
     chat_id = m.chat.id
@@ -237,14 +239,19 @@ def search_and_show_choices(chat_id, query):
         return
     markup = InlineKeyboardMarkup()
     for v in videos[:5]:
-        btn = InlineKeyboardButton(text=v['title'][:40], callback_data=f"download::{v['webpage_url']}")
+        safe_url = quote(v['webpage_url'], safe='')  # 🔹 URL encode
+        btn = InlineKeyboardButton(
+            text=v['title'][:40],
+            callback_data=f"download::{safe_url}"
+        )
         markup.add(btn)
     BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
 
 @BOT.callback_query_handler(func=lambda call: call.data.startswith("download::"))
 def callback_download(call: CallbackQuery):
     chat_id = call.message.chat.id
-    video_url = call.data.split("::", 1)[1]
+    encoded_url = call.data.split("::", 1)[1]
+    video_url = unquote(encoded_url)  # 🔹 decode
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
 
