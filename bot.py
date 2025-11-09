@@ -1,22 +1,20 @@
-import os, time, threading, tempfile, shutil, asyncio, json
-from pathlib import Path
+import os, sys, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
-
-import telebot
+from pathlib import Path
+import telebot, aiohttp, requests
+from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
 from flask import Flask
-from dotenv import load_dotenv
-import aiohttp, requests
 
-# ===== CONFIG =====
+# ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30 MB
+MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
 # ===== TELEBOT SETUP =====
-BOT = telebot.TeleBot(TOKEN)
+BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
@@ -61,7 +59,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== SEARCH =====
+# ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
@@ -106,7 +104,8 @@ async def invidious_search(query, session, timeout=5):
 
 async def find_video_for_query(query):
     cached = cache_get(query)
-    if cached: return cached
+    if cached:
+        return cached
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
     async with aiohttp.ClientSession() as session:
@@ -122,7 +121,7 @@ async def find_video_for_query(query):
         return direct_res
     return None
 
-# ===== DOWNLOAD MP3 =====
+# ===== DOWNLOAD AUDIO =====
 def download_to_mp3(video_url):
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
@@ -149,7 +148,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== QUEUE PROCESS =====
+# ===== PROCESSING QUEUE =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -180,7 +179,7 @@ def process_queue(chat_id):
     finally:
         ACTIVE.pop(chat_id, None)
 
-# ===== BOT HANDLERS =====
+# ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
     BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
@@ -206,17 +205,17 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE =====
+# ===== KEEP ALIVE (Flask) =====
 app = Flask("music4u_keepalive")
+
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
-def run_flask():
-    app.run(host="0.0.0.0", port=PORT)
-
 # ===== MAIN =====
+def run_bot():
+    BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    print("✅ Music4U bot running...")
-    BOT.infinity_polling(skip_pending=True)
+    threading.Thread(target=run_bot, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT)
