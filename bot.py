@@ -1,41 +1,29 @@
-import os
-import time
-import json
-import threading
-import tempfile
-import shutil
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import os, json, time, threading, tempfile, shutil
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import telebot
-import aiohttp
-import requests
 from yt_dlp import YoutubeDL
-from flask import Flask
+from flask import Flask, request, abort
 from dotenv import load_dotenv
 
-# ===== LOAD CONFIG =====
+# ===== CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
+YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 
-# ===== TELEBOT SETUP =====
+# ===== TELEGRAM BOT =====
 BOT = telebot.TeleBot(TOKEN)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
-ACTIVE = {}
 CHAT_QUEUE = {}
+ACTIVE = {}
 
-# ===== CACHE SYSTEM =====
+# ===== CACHE =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
-INVIDIOUS_INSTANCES = [
-    "https://yewtu.be",
-    "https://yewtu.cafe",
-    "https://invidious.privacydev.net"
-]
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -68,8 +56,8 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== SEARCH HELPERS =====
-def ytdlp_search_sync(query, use_proxy=True):
+# ===== SEARCH & DOWNLOAD =====
+def ytdlp_search_sync(query):
     opts = {
         "quiet": True,
         "noplaylist": True,
@@ -77,7 +65,7 @@ def ytdlp_search_sync(query, use_proxy=True):
         "format": "bestaudio/best",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
-    if use_proxy and YTDLP_PROXY:
+    if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
@@ -93,44 +81,6 @@ def ytdlp_search_sync(query, use_proxy=True):
         return None
     return None
 
-async def invidious_search(query, session, timeout=5):
-    for base in INVIDIOUS_INSTANCES:
-        try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
-            async with session.get(url, timeout=timeout) as resp:
-                if resp.status != 200: continue
-                data = await resp.json()
-                if data:
-                    v = data[0]
-                    return {
-                        "title": v.get("title"),
-                        "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
-                        "id": v.get("videoId")
-                    }
-        except:
-            continue
-    return None
-
-async def find_video_for_query(query):
-    cached = cache_get(query)
-    if cached:
-        return cached
-    loop = asyncio.get_event_loop()
-    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
-    async with aiohttp.ClientSession() as session:
-        inv_future = invidious_search(query, session)
-        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-        for r in results:
-            if isinstance(r, dict) and r.get("webpage_url"):
-                cache_put(query, r)
-                return r
-    direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
-    if direct_res and direct_res.get("webpage_url"):
-        cache_put(query, direct_res)
-        return direct_res
-    return None
-
-# ===== DOWNLOAD AUDIO =====
 def download_to_mp3(video_url):
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
@@ -167,9 +117,7 @@ def process_queue(chat_id):
     try:
         while CHAT_QUEUE[chat_id]:
             query = CHAT_QUEUE[chat_id].pop(0)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            video_info = loop.run_until_complete(find_video_for_query(query))
+            video_info = ytdlp_search_sync(query)
             if not video_info:
                 BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
                 continue
@@ -188,7 +136,20 @@ def process_queue(chat_id):
     finally:
         ACTIVE.pop(chat_id, None)
 
-# ===== BOT COMMANDS =====
+# ===== FLASK APP FOR WEBHOOK =====
+app = Flask(__name__)
+
+@app.route("/"+TOKEN, methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") == "application/json":
+        json_str = request.get_data().decode("UTF-8")
+        update = telebot.types.Update.de_json(json_str)
+        BOT.process_new_updates([update])
+        return "", 200
+    else:
+        abort(403)
+
+# ===== TELEGRAM HANDLERS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
     BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
@@ -214,18 +175,11 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE SERVER =====
-flask_app = Flask("music4u_keepalive")
+# ===== SET WEBHOOK =====
+def set_webhook():
+    BOT.remove_webhook()
+    BOT.set_webhook(url=WEBHOOK_URL)
 
-@flask_app.route("/")
-def home():
-    return "✅ Music4U bot is alive"
-
-def run_flask():
-    flask_app.run(host="0.0.0.0", port=PORT)
-
-# ===== MAIN =====
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    print("✅ Music4U bot running...")
-    BOT.infinity_polling(skip_pending=True, timeout=60)
+    set_webhook()
+    app.run(host="0.0.0.0", port=PORT)
