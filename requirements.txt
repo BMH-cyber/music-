@@ -9,3 +9,4 @@ aiohttp
 gunicorn
 googlesearch-python
 youtube-search-python
+pytube
