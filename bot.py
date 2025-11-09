@@ -1,4 +1,4 @@
-import os, sys, json, time, asyncio, threading, tempfile, shutil
+import os, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
@@ -10,12 +10,12 @@ from flask import Flask, request
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-APP_URL = os.getenv("APP_URL")  # e.g., https://music-production-fecd.up.railway.app
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Railway app URL + /bot
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
 # ===== TELEBOT SETUP =====
-BOT = telebot.TeleBot(TOKEN, parse_mode=None)
+BOT = telebot.TeleBot(TOKEN, parse_mode=None, threaded=True)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
@@ -202,29 +202,33 @@ def on_message(m):
     if chat_id not in CHAT_QUEUE:
         CHAT_QUEUE[chat_id] = []
     CHAT_QUEUE[chat_id].append(text)
-    THREAD_POOL.submit(process_queue, chat_id)
     BOT.send_chat_action(chat_id, "typing")
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
+    THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== FLASK WEBHOOK SERVER =====
+# ===== FLASK APP for Webhook / Keepalive =====
 app = Flask("music4u_keepalive")
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
-    BOT.process_new_updates([update])
-    return "!", 200
 
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
-# ===== SET WEBHOOK =====
-BOT.remove_webhook()
-BOT.set_webhook(url=f"{APP_URL}/{TOKEN}")
+@app.route(f"/bot", methods=["POST"])
+def telegram_webhook():
+    if request.headers.get("content-type") == "application/json":
+        json_string = request.get_data().decode("utf-8")
+        update = telebot.types.Update.de_json(json_string)
+        BOT.process_new_updates([update])
+        return "OK", 200
+    else:
+        return "Invalid request", 403
 
-# ===== RUN =====
+# ===== SET WEBHOOK =====
+if WEBHOOK_URL:
+    BOT.remove_webhook()
+    BOT.set_webhook(url=WEBHOOK_URL)
+
+# ===== RUN BOT (Polling fallback if webhook not set) =====
 if __name__ == "__main__":
-    print("✅ Music4U bot running (Webhook mode)...")
-    # Gunicorn will serve Flask app, no need for BOT.infinity_polling()
+    print("✅ Music4U bot starting...")
+    BOT.infinity_polling(timeout=60, long_polling_timeout=30)
