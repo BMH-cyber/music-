@@ -1,4 +1,5 @@
-import os, time, threading, tempfile, shutil, json, asyncio
+# bot.py
+import os, sys, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
@@ -22,6 +23,11 @@ CHAT_QUEUE = {}
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://yewtu.cafe",
+    "https://invidious.privacydev.net"
+]
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -80,11 +86,6 @@ def ytdlp_search_sync(query, use_proxy=True):
     return None
 
 async def invidious_search(query, session, timeout=5):
-    INVIDIOUS_INSTANCES = [
-        "https://yewtu.be",
-        "https://yewtu.cafe",
-        "https://invidious.privacydev.net"
-    ]
     for base in INVIDIOUS_INSTANCES:
         try:
             url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
@@ -182,7 +183,7 @@ def process_queue(chat_id):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as MP3.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as MP3!")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -205,17 +206,16 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE =====
-def keep_alive():
-    app = Flask("music4u_keepalive")
-    @app.route("/")
-    def home():
-        return "✅ Music4U bot is alive"
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+# ===== KEEP ALIVE (for Railway) =====
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "✅ Music4U bot is alive!"
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    keep_alive()
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
     print("✅ Music4U bot running...")
     while True:
         try:
