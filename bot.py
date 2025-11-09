@@ -149,7 +149,28 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== PROCESSING QUEUE =====
+# ===== PROCESSING QUEUE (async optimized) =====
+async def process_song(chat_id, query):
+    video_info = await find_video_for_query(query)
+    if not video_info:
+        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+        return
+    BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
+    
+    loop = asyncio.get_event_loop()
+    mp3_file = await loop.run_in_executor(None, download_to_mp3, video_info["webpage_url"])
+    
+    if mp3_file:
+        size = os.path.getsize(mp3_file)
+        if size > MAX_TELEGRAM_FILE:
+            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
+        else:
+            with open(mp3_file, "rb") as f:
+                BOT.send_audio(chat_id, f, title=video_info["title"])
+        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
+    else:
+        BOT.send_message(chat_id, f"❌ Download failed: {query}")
+
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -157,26 +178,11 @@ def process_queue(chat_id):
     if ACTIVE.get(chat_id): return
     ACTIVE[chat_id] = True
     try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         while CHAT_QUEUE[chat_id]:
             query = CHAT_QUEUE[chat_id].pop(0)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            video_info = loop.run_until_complete(find_video_for_query(query))
-            if not video_info:
-                BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
-                continue
-            BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
-            mp3_file = download_to_mp3(video_info["webpage_url"])
-            if mp3_file:
-                size = os.path.getsize(mp3_file)
-                if size > MAX_TELEGRAM_FILE:
-                    BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
-                else:
-                    with open(mp3_file, "rb") as f:
-                        BOT.send_audio(chat_id, f, title=video_info["title"])
-                shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
-            else:
-                BOT.send_message(chat_id, f"❌ Download failed: {query}")
+            loop.run_until_complete(process_song(chat_id, query))
     finally:
         ACTIVE.pop(chat_id, None)
 
@@ -217,8 +223,6 @@ def start_flask():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Start Flask server in separate thread
     threading.Thread(target=start_flask, daemon=True).start()
     print("✅ Music4U bot running...")
-    # Start bot polling
     BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
