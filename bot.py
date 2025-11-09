@@ -14,8 +14,8 @@ import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
+from googlesearch import search  # pip install googlesearch-python
 import subprocess
-from googlesearch import search  # fallback if YouTube fails
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -23,15 +23,21 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
-APP_URL = os.getenv("APP_URL")
+APP_URL = os.getenv("APP_URL")  # https://your-app.up.railway.app
+SOUNDCLOUD_CLIENT_ID = os.getenv("SOUNDCLOUD_CLIENT_ID", "")
 
 # ===== TELEBOT SETUP =====
-BOT = telebot.TeleBot(TOKEN)
+BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
-CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", 7))
+CACHE_TTL_DAYS = 7
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://yewtu.cafe",
+    "https://invidious.privacydev.net"
+]
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -90,11 +96,6 @@ def ytdlp_search_sync(query, use_proxy=True):
     return None
 
 async def invidious_search(query, session, timeout=5):
-    INVIDIOUS_INSTANCES = [
-        "https://yewtu.be",
-        "https://yewtu.cafe",
-        "https://invidious.privacydev.net"
-    ]
     for base in INVIDIOUS_INSTANCES:
         try:
             url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
@@ -112,10 +113,20 @@ async def invidious_search(query, session, timeout=5):
             continue
     return None
 
+def google_search(query):
+    try:
+        for url in search(query + " site:soundcloud.com", num_results=5):
+            if "soundcloud.com" in url:
+                return url
+    except:
+        pass
+    return None
+
 async def find_video_for_query(query):
     cached = cache_get(query)
     if cached:
         return cached
+
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
     async with aiohttp.ClientSession() as session:
@@ -125,17 +136,14 @@ async def find_video_for_query(query):
             if isinstance(r, dict) and r.get("webpage_url"):
                 cache_put(query, r)
                 return r
-    # fallback: Google search
-    try:
-        for url in search(query, num_results=5):
-            if "youtube.com/watch" in url or "youtu.be" in url:
-                res = ytdlp_search_sync(url)
-                if res:
-                    cache_put(query, res)
-                    return res
-    except:
-        pass
-    # try direct YT search without proxy
+
+    # Google/SoundCloud fallback
+    sc_url = google_search(query)
+    if sc_url:
+        r = {"title": query, "webpage_url": sc_url, "id": query}
+        cache_put(query, r)
+        return r
+
     direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
     if direct_res and direct_res.get("webpage_url"):
         cache_put(query, direct_res)
@@ -235,10 +243,12 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
+    # Set webhook
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
+
     print("✅ Music4U bot running...")
     app.run(host="0.0.0.0", port=PORT)
