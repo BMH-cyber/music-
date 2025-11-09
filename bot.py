@@ -5,6 +5,7 @@ import asyncio
 import threading
 import tempfile
 import shutil
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -22,13 +23,20 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
-APP_URL = os.getenv("APP_URL")  # https://your-app.up.railway.app
+APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
+QUEUE = {}
 ACTIVE = {}
-CHAT_QUEUE = {}
+
+# ===== LOGGING =====
+logging.basicConfig(
+    filename="music4u_log.txt",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
@@ -43,12 +51,16 @@ def load_cache():
     if CACHE_FILE.exists():
         try:
             return json.load(open(CACHE_FILE, "r", encoding="utf-8"))
-        except:
+        except Exception as e:
+            logging.error(f"Cache load error: {e}")
             return {}
     return {}
 
 def save_cache(c):
-    json.dump(c, open(CACHE_FILE, "w", encoding="utf-8"))
+    try:
+        json.dump(c, open(CACHE_FILE, "w", encoding="utf-8"))
+    except Exception as e:
+        logging.error(f"Cache save error: {e}")
 
 _cache = load_cache()
 
@@ -91,8 +103,8 @@ def ytdlp_search_sync(query, use_proxy=True):
                     "webpage_url": e.get("webpage_url") or e.get("url"),
                     "id": e.get("id")
                 }
-    except:
-        return None
+    except Exception as e:
+        logging.warning(f"yt_dlp search failed for {query}: {e}")
     return None
 
 async def invidious_search(query, session, timeout=5):
@@ -109,7 +121,7 @@ async def invidious_search(query, session, timeout=5):
                         "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
                         "id": v.get("videoId")
                     }
-        except:
+        except Exception:
             continue
     return None
 
@@ -126,6 +138,7 @@ async def find_video_for_query(query):
             if isinstance(r, dict) and r.get("webpage_url"):
                 cache_put(query, r)
                 return r
+    # fallback without proxy
     direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
     if direct_res and direct_res.get("webpage_url"):
         cache_put(query, direct_res)
@@ -148,8 +161,7 @@ def download_to_mp3(video_url):
         "outtmpl": outtmpl,
         "noplaylist": True,
         "quiet": True,
-        "no_warnings": True,
-        "postprocessors": []
+        "no_warnings": True
     }
     if check_ffmpeg():
         opts["postprocessors"] = [
@@ -163,53 +175,84 @@ def download_to_mp3(video_url):
         for f in os.listdir(tempdir):
             if f.lower().endswith(".mp3"):
                 return os.path.join(tempdir, f)
-    except:
-        shutil.rmtree(tempdir, ignore_errors=True)
-        return None
+    except Exception as e:
+        logging.error(f"Download error: {e}")
+    shutil.rmtree(tempdir, ignore_errors=True)
     return None
 
 # ===== PROCESSING QUEUE =====
-def process_queue(chat_id, query):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    video_info = loop.run_until_complete(find_video_for_query(query))
-    if not video_info:
-        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+def process_next(chat_id):
+    if not QUEUE.get(chat_id): 
+        ACTIVE.pop(chat_id, None)
         return
-    BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
-    mp3_file = download_to_mp3(video_info["webpage_url"])
-    if mp3_file:
-        size = os.path.getsize(mp3_file)
-        if size > MAX_TELEGRAM_FILE:
-            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
+    query = QUEUE[chat_id].pop(0)
+    BOT.send_message(chat_id, f"🎧 Processing: {query}")
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        video_info = loop.run_until_complete(find_video_for_query(query))
+        if not video_info:
+            BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+            process_next(chat_id)
+            return
+        BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
+        mp3_file = download_to_mp3(video_info["webpage_url"])
+        if mp3_file:
+            size = os.path.getsize(mp3_file)
+            if size > MAX_TELEGRAM_FILE:
+                BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
+            else:
+                with open(mp3_file, "rb") as f:
+                    BOT.send_audio(chat_id, f, title=video_info["title"])
+            shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
         else:
-            with open(mp3_file, "rb") as f:
-                BOT.send_audio(chat_id, f, title=video_info["title"])
-        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
-    else:
-        BOT.send_message(chat_id, f"❌ Download failed: {query}")
+            BOT.send_message(chat_id, f"❌ Download failed: {query}")
+    except Exception as e:
+        BOT.send_message(chat_id, "❌ Unexpected error occurred.")
+        logging.error(f"process_queue error: {e}")
+    finally:
+        process_next(chat_id)
+
+def add_to_queue(chat_id, query):
+    if chat_id not in QUEUE:
+        QUEUE[chat_id] = []
+    QUEUE[chat_id].append(query)
+    BOT.send_message(chat_id, f"✅ Added to queue: {query}")
+    if chat_id not in ACTIVE:
+        ACTIVE[chat_id] = True
+        THREAD_POOL.submit(process_next, chat_id)
 
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Send a song name to download MP3.\nCommands:\n/queue - View queue\n/stop - Clear queue")
+
+@BOT.message_handler(commands=["queue"])
+def cmd_queue(m):
+    chat_id = m.chat.id
+    q = QUEUE.get(chat_id, [])
+    if not q:
+        BOT.send_message(chat_id, "🎵 Queue is empty.")
+    else:
+        text = "\n".join([f"{i+1}. {x}" for i, x in enumerate(q)])
+        BOT.send_message(chat_id, f"🎧 Your Queue:\n{text}")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
     chat_id = m.chat.id
-    BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
+    QUEUE[chat_id] = []
+    ACTIVE.pop(chat_id, None)
+    BOT.send_message(chat_id, "🛑 Queue cleared.")
 
 @BOT.message_handler(func=lambda m: True)
 def on_message(m):
-    chat_id = m.chat.id
     text = (m.text or "").strip()
     if not text or text.startswith("/"):
         BOT.reply_to(m, "Use /start or type a song name.")
         return
-    BOT.send_chat_action(chat_id, "typing")
-    THREAD_POOL.submit(process_queue, chat_id, text)
+    add_to_queue(m.chat.id, text)
 
-# ===== FLASK SERVER FOR WEBHOOK =====
+# ===== FLASK SERVER =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -225,13 +268,10 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Set webhook
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
-
     print("✅ Music4U bot running...")
-    # Start Flask server
     app.run(host="0.0.0.0", port=PORT)
