@@ -238,20 +238,22 @@ def search_and_show_choices(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     markup = InlineKeyboardMarkup()
+    row = []
     for v in videos[:5]:
-        safe_url = quote(v['webpage_url'], safe='')  # 🔹 URL encode
+        safe_url = quote(v['webpage_url'], safe='')
         btn = InlineKeyboardButton(
             text=v['title'][:40],
             callback_data=f"download::{safe_url}"
         )
-        markup.add(btn)
+        row.append(btn)
+    markup.row(*row)  # 🔹 5 buttons in one row
     BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
 
 @BOT.callback_query_handler(func=lambda call: call.data.startswith("download::"))
 def callback_download(call: CallbackQuery):
     chat_id = call.message.chat.id
     encoded_url = call.data.split("::", 1)[1]
-    video_url = unquote(encoded_url)  # 🔹 decode
+    video_url = unquote(encoded_url)
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
 
