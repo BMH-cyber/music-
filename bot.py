@@ -6,8 +6,6 @@ import tempfile
 import shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-import subprocess
-import urllib.parse
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -16,6 +14,7 @@ import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
+import subprocess
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -32,6 +31,11 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://yewtu.cafe",
+    "https://invidious.privacydev.net"
+]
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -64,32 +68,6 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== INVIDIOUS INSTANCES =====
-INVIDIOUS_INSTANCES = [
-    "https://yewtu.be",
-    "https://yewtu.cafe",
-    "https://invidious.snopyta.org",
-    "https://vid.puffyan.us",
-    "https://invidious.kavin.rocks"
-]
-
-async def refresh_invidious_instances():
-    # Update fresh instances every 30 minutes
-    url = "https://api.invidious.io/instances.json"
-    while True:
-        try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
-            if instances:
-                global INVIDIOUS_INSTANCES
-                INVIDIOUS_INSTANCES = instances
-                print(f"✅ Refreshed {len(instances)} Invidious instances")
-        except Exception as e:
-            print("❌ Failed to refresh instances:", e)
-        await asyncio.sleep(1800)  # 30 minutes
-
 # ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
@@ -103,11 +81,9 @@ def ytdlp_search_sync(query, use_proxy=True):
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            safe_query = urllib.parse.quote(query)
-            info = ydl.extract_info(f"ytsearch5:{safe_query}", download=False)
+            info = ydl.extract_info(f"ytsearch5:{query}", download=False)
             return info.get("entries") or []
-    except Exception as e:
-        print("yt-dlp search error:", e)
+    except:
         return []
 
 async def invidious_search(query, session, timeout=5):
@@ -135,19 +111,14 @@ async def find_videos_for_query(query):
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-    videos = []
-    for r in results:
-        if isinstance(r, list):
-            videos.extend(r)
-    # fallback: if nothing found, retry yt-dlp only
-    if not videos:
-        print(f"⚠️ No result found in Invidious, trying yt-dlp fallback")
-        yt_fallback = ytdlp_search_sync(query, True)
-        videos.extend(yt_fallback)
-    for v in videos:
-        if v.get("webpage_url"):
-            cache_put(query, v)
-    return videos
+        videos = []
+        for r in results:
+            if isinstance(r, list):
+                videos.extend(r)
+        for v in videos:
+            if v.get("webpage_url"):
+                cache_put(query, v)
+        return videos
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -186,7 +157,6 @@ def download_to_mp3(video_url):
     return None
 
 def download_and_send(chat_id, video_url):
-    BOT.send_chat_action(chat_id, "upload_audio")
     mp3_file = download_to_mp3(video_url)
     if mp3_file:
         size = os.path.getsize(mp3_file)
@@ -228,7 +198,7 @@ def search_and_show_choices(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     markup = InlineKeyboardMarkup()
-    for v in videos[:5]:
+    for v in videos[:5]:  # top 5 results
         btn = InlineKeyboardButton(text=v['title'][:40], callback_data=f"download::{v['webpage_url']}")
         markup.add(btn)
     BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
@@ -256,8 +226,6 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(refresh_invidious_instances())  # auto-refresh instances
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
