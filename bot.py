@@ -1,10 +1,20 @@
-import os, sys, json, time, asyncio, threading, tempfile, shutil
-from concurrent.futures import ThreadPoolExecutor
+import os
+import json
+import time
+import asyncio
+import threading
+import tempfile
+import shutil
 from pathlib import Path
-import telebot, aiohttp, requests, subprocess
-from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
+
+import telebot
+import aiohttp
+import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
+from dotenv import load_dotenv
+import subprocess
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -12,7 +22,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
-APP_URL = os.getenv("APP_URL")
+APP_URL = os.getenv("APP_URL")  # https://your-app.up.railway.app
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -159,35 +169,25 @@ def download_to_mp3(video_url):
     return None
 
 # ===== PROCESSING QUEUE =====
-def process_queue(chat_id):
-    if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
-        ACTIVE.pop(chat_id, None)
+def process_queue(chat_id, query):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    video_info = loop.run_until_complete(find_video_for_query(query))
+    if not video_info:
+        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
-    if ACTIVE.get(chat_id): return
-    ACTIVE[chat_id] = True
-    try:
-        while CHAT_QUEUE[chat_id]:
-            query = CHAT_QUEUE[chat_id].pop(0)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            video_info = loop.run_until_complete(find_video_for_query(query))
-            if not video_info:
-                BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
-                continue
-            BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
-            mp3_file = download_to_mp3(video_info["webpage_url"])
-            if mp3_file:
-                size = os.path.getsize(mp3_file)
-                if size > MAX_TELEGRAM_FILE:
-                    BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
-                else:
-                    with open(mp3_file, "rb") as f:
-                        BOT.send_audio(chat_id, f, title=video_info["title"])
-                shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
-            else:
-                BOT.send_message(chat_id, f"❌ Download failed: {query}")
-    finally:
-        ACTIVE.pop(chat_id, None)
+    BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
+    mp3_file = download_to_mp3(video_info["webpage_url"])
+    if mp3_file:
+        size = os.path.getsize(mp3_file)
+        if size > MAX_TELEGRAM_FILE:
+            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
+        else:
+            with open(mp3_file, "rb") as f:
+                BOT.send_audio(chat_id, f, title=video_info["title"])
+        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
+    else:
+        BOT.send_message(chat_id, f"❌ Download failed: {query}")
 
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
@@ -197,8 +197,6 @@ def cmd_start(m):
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
     chat_id = m.chat.id
-    CHAT_QUEUE[chat_id] = []
-    ACTIVE.pop(chat_id, None)
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
 @BOT.message_handler(func=lambda m: True)
@@ -208,26 +206,32 @@ def on_message(m):
     if not text or text.startswith("/"):
         BOT.reply_to(m, "Use /start or type a song name.")
         return
-    if chat_id not in CHAT_QUEUE:
-        CHAT_QUEUE[chat_id] = []
-    CHAT_QUEUE[chat_id].append(text)
     BOT.send_chat_action(chat_id, "typing")
-    BOT.send_message(chat_id, f"🔍 Queued: {text}")
-    THREAD_POOL.submit(process_queue, chat_id)
+    THREAD_POOL.submit(process_queue, chat_id, text)
 
-# ===== KEEP ALIVE =====
+# ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
-@app.route("/", methods=["GET", "POST"])
+
+@app.route("/", methods=["GET"])
 def home():
     return "✅ Music4U bot is alive"
 
-def start_flask():
-    app.run(host="0.0.0.0", port=PORT)
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    BOT.process_new_updates([update])
+    return "ok", 200
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Start Flask server in separate thread
-    threading.Thread(target=start_flask, daemon=True).start()
+    # Set webhook
+    if APP_URL:
+        webhook_url = f"{APP_URL}/{TOKEN}"
+        BOT.remove_webhook()
+        BOT.set_webhook(url=webhook_url)
+        print(f"✅ Webhook set to {webhook_url}")
+
     print("✅ Music4U bot running...")
-    # Start bot polling
-    BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+    # Start Flask server
+    app.run(host="0.0.0.0", port=PORT)
