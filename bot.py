@@ -1,4 +1,4 @@
-import os, json, time, asyncio, threading, tempfile, shutil
+import os, sys, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
@@ -10,7 +10,7 @@ from flask import Flask, request
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Ex: https://your-app.up.railway.app/bot
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
@@ -206,25 +206,27 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== FLASK APP (Webhook) =====
-app = Flask(__name__)
+# ===== FLASK APP FOR WEBHOOK =====
+app = Flask("music4u")
 
-@app.route("/bot", methods=["POST"])
+@app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     json_str = request.get_data().decode("utf-8")
     update = telebot.types.Update.de_json(json_str)
     BOT.process_new_updates([update])
-    return "OK", 200
+    return "!", 200
+
+@app.route("/")
+def home():
+    return "✅ Music4U bot is alive"
 
 # ===== SET WEBHOOK =====
 def set_webhook():
     if WEBHOOK_URL:
         BOT.remove_webhook()
         BOT.set_webhook(url=WEBHOOK_URL)
-        print("✅ Webhook set:", WEBHOOK_URL)
 
 # ===== MAIN =====
 if __name__ == "__main__":
     set_webhook()
     print("✅ Music4U bot running (Webhook mode)...")
-    app.run(host="0.0.0.0", port=PORT)
