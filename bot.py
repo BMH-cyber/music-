@@ -2,6 +2,7 @@ import os
 import json
 import time
 import asyncio
+import threading
 import tempfile
 import shutil
 from pathlib import Path
@@ -13,8 +14,8 @@ import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import subprocess
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -69,7 +70,7 @@ def cache_put(q, info):
     save_cache(_cache)
 
 # ===== SEARCH HELPERS =====
-def ytdlp_search_sync(query):
+def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
         "noplaylist": True,
@@ -77,7 +78,7 @@ def ytdlp_search_sync(query):
         "format": "bestaudio/best",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
-    if YTDLP_PROXY:
+    if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
@@ -86,39 +87,41 @@ def ytdlp_search_sync(query):
     except:
         return []
 
-async def invidious_search(query, session):
+async def invidious_search(query, session, timeout=5):
+    results = []
     for base in INVIDIOUS_INSTANCES:
         try:
             url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=5"
-            async with session.get(url, timeout=5) as resp:
+            async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
-                return [{
-                    "title": v.get("title"),
-                    "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
-                    "id": v.get("videoId")
-                } for v in data]
+                for v in data:
+                    results.append({
+                        "title": v.get("title"),
+                        "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
+                        "id": v.get("videoId")
+                    })
         except:
             continue
-    return []
+    return results
 
 async def find_videos_for_query(query):
     cached = cache_get(query)
     if cached:
         return [cached]
     loop = asyncio.get_event_loop()
-    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query)
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-        videos = []
-        for r in results:
-            if isinstance(r, list):
-                videos.extend(r)
-        for v in videos:
-            if v.get("webpage_url"):
-                cache_put(query, v)
-        return videos
+    videos = []
+    for r in results:
+        if isinstance(r, list):
+            videos.extend(r)
+    for v in videos:
+        if v.get("webpage_url"):
+            cache_put(query, v)
+    return videos
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -188,7 +191,7 @@ def search_and_show_choices(chat_id, query):
     for v in videos[:5]:
         btn = InlineKeyboardButton(text=v['title'][:40], callback_data=f"download::{v['webpage_url']}")
         markup.add(btn)
-    BOT.send_message(chat_id, "Select the song you want:", reply_markup=markup)
+    BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
 
 # ===== CALLBACK HANDLER =====
 @BOT.callback_query_handler(func=lambda call: call.data.startswith("download::"))
