@@ -2,6 +2,7 @@ import os
 import json
 import time
 import asyncio
+import threading
 import tempfile
 import shutil
 from pathlib import Path
@@ -22,6 +23,7 @@ PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
 APP_URL = os.getenv("APP_URL")
+SOUNDCLOUD_CLIENT_ID = os.getenv("SOUNDCLOUD_CLIENT_ID", "")
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -30,6 +32,11 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://yewtu.cafe",
+    "https://invidious.privacydev.net"
+]
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -63,12 +70,6 @@ def cache_put(q, info):
     save_cache(_cache)
 
 # ===== SEARCH HELPERS =====
-INVIDIOUS_INSTANCES = [
-    "https://yewtu.be",
-    "https://yewtu.cafe",
-    "https://invidious.privacydev.net"
-]
-
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
@@ -111,67 +112,120 @@ async def invidious_search(query, session, timeout=5):
             continue
     return None
 
-# ===== GOOGLE SEARCH =====
-def google_search_mp3(query, max_results=5):
+async def google_search(query):
     try:
         from googlesearch import search
-    except ImportError:
+        for url in search(query + " site:youtube.com", num_results=5):
+            if "youtube.com/watch" in url:
+                return {"webpage_url": url, "title": query}
+    except:
         return None
-    for url in search(f"{query} mp3 site:mp3juices.cc OR site:soundcloud.com OR site:mp3xd.net", num_results=max_results):
-        if url.endswith(".mp3"):
-            return {"title": query, "webpage_url": url, "id": url}
     return None
 
-# ===== DOWNLOAD AUDIO =====
-def check_ffmpeg():
-    try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except:
-        return False
+async def find_video_for_query(query):
+    cached = cache_get(query)
+    if cached:
+        return cached
+
+    loop = asyncio.get_event_loop()
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
+
+    async with aiohttp.ClientSession() as session:
+        inv_future = invidious_search(query, session)
+        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
+
+    for r in results:
+        if isinstance(r, dict) and r.get("webpage_url"):
+            cache_put(query, r)
+            return r
+
+    direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
+    if direct_res and direct_res.get("webpage_url"):
+        cache_put(query, direct_res)
+        return direct_res
+
+    google_res = await google_search(query)
+    if google_res:
+        cache_put(query, google_res)
+        return google_res
+
+    if SOUNDCLOUD_CLIENT_ID:
+        sc_url = f"https://api-v2.soundcloud.com/search/tracks?q={requests.utils.requote_uri(query)}&client_id={SOUNDCLOUD_CLIENT_ID}&limit=1"
+        try:
+            resp = requests.get(sc_url, timeout=5)
+            data = resp.json()
+            if data.get("collection"):
+                track = data["collection"][0]
+                return {"title": track["title"], "webpage_url": track["permalink_url"], "id": track["id"]}
+        except:
+            pass
+
+    return None
+
+# ===== DOWNLOAD AUDIO WITH COOKIE AUTO-RETRY =====
+def get_cookies_path():
+    env = os.getenv("COOKIES_FILE")
+    if env and os.path.exists(env):
+        return env
+    for path in ("./cookies.txt", "/tmp/cookies.txt"):
+        if os.path.exists(path):
+            return path
+    return None
 
 def download_to_mp3(video_url):
-    tempdir = tempfile.mkdtemp(prefix="music4u_")
-    outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
-    opts = {
-        "format": "bestaudio/best",
-        "outtmpl": outtmpl,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "postprocessors": []
-    }
-    if check_ffmpeg():
-        opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
-        ]
-    if YTDLP_PROXY:
-        opts["proxy"] = YTDLP_PROXY
-    try:
-        with YoutubeDL(opts) as ydl:
-            ydl.extract_info(video_url, download=True)
-        for f in os.listdir(tempdir):
-            if f.lower().endswith(".mp3"):
-                return os.path.join(tempdir, f)
-    except:
-        shutil.rmtree(tempdir, ignore_errors=True)
-        return None
+    def _attempt(cookiefile=None):
+        tmpdir = tempfile.mkdtemp(prefix="music4u_")
+        outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
+        opts = {
+            "format": "bestaudio/best",
+            "outtmpl": outtmpl,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        }
+        if shutil.which("ffmpeg"):
+            opts["postprocessors"] = [
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+            ]
+        if cookiefile:
+            opts["cookiefile"] = cookiefile
+        try:
+            with YoutubeDL(opts) as ydl:
+                ydl.extract_info(video_url, download=True)
+            for f in os.listdir(tmpdir):
+                if f.lower().endswith(".mp3"):
+                    return os.path.join(tmpdir, f)
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return None
+        except:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return None
+
+    mp3_file = _attempt()
+    if mp3_file:
+        return mp3_file
+
+    cookies = get_cookies_path()
+    if cookies:
+        mp3_file = _attempt(cookies)
+        if mp3_file:
+            return mp3_file
+
     return None
 
-# ===== PROCESSING QUEUE =====
+# ===== PROCESS QUEUE =====
 def process_queue(chat_id, query):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    # 1️⃣ Try YouTube/Invidious
     video_info = loop.run_until_complete(find_video_for_query(query))
-    # 2️⃣ Fallback Google MP3
     if not video_info:
-        video_info = google_search_mp3(query)
-    if not video_info:
-        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+        BOT.send_message(chat_id, f"❌ Couldn't find: {query}")
         return
+
     BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
+
     mp3_file = download_to_mp3(video_info["webpage_url"])
+
     if mp3_file:
         size = os.path.getsize(mp3_file)
         if size > MAX_TELEGRAM_FILE:
@@ -183,29 +237,15 @@ def process_queue(chat_id, query):
     else:
         BOT.send_message(chat_id, f"❌ Download failed: {query}")
 
-async def find_video_for_query(query):
-    cached = cache_get(query)
-    if cached:
-        return cached
-    loop = asyncio.get_event_loop()
-    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
-    async with aiohttp.ClientSession() as session:
-        inv_future = invidious_search(query, session)
-        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-        for r in results:
-            if isinstance(r, dict) and r.get("webpage_url"):
-                cache_put(query, r)
-                return r
-    direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
-    if direct_res and direct_res.get("webpage_url"):
-        cache_put(query, direct_res)
-        return direct_res
-    return None
-
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
     BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
+
+@BOT.message_handler(commands=["stop"])
+def cmd_stop(m):
+    chat_id = m.chat.id
+    BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
 @BOT.message_handler(func=lambda m: True)
 def on_message(m):
@@ -217,7 +257,7 @@ def on_message(m):
     BOT.send_chat_action(chat_id, "typing")
     THREAD_POOL.submit(process_queue, chat_id, text)
 
-# ===== FLASK SERVER =====
+# ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -238,5 +278,6 @@ if __name__ == "__main__":
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
+
     print("✅ Music4U bot running...")
     app.run(host="0.0.0.0", port=PORT)
