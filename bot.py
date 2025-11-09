@@ -2,20 +2,19 @@ import os
 import json
 import time
 import asyncio
-import threading
 import tempfile
 import shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import aiohttp
 import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
 import subprocess
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -23,7 +22,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
-APP_URL = os.getenv("APP_URL")  # https://your-app.up.railway.app
+APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -88,22 +87,20 @@ def ytdlp_search_sync(query, use_proxy=True):
         return []
 
 async def invidious_search(query, session, timeout=5):
-    results = []
     for base in INVIDIOUS_INSTANCES:
         try:
             url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=5"
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
-                for v in data:
-                    results.append({
-                        "title": v.get("title"),
-                        "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
-                        "id": v.get("videoId")
-                    })
+                return [{
+                    "title": v.get("title"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
+                    "id": v.get("videoId")
+                } for v in data]
         except:
             continue
-    return results
+    return []
 
 async def find_videos_for_query(query):
     cached = cache_get(query)
@@ -114,14 +111,14 @@ async def find_videos_for_query(query):
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-    videos = []
-    for r in results:
-        if isinstance(r, list):
-            videos.extend(r)
-    for v in videos:
-        if v.get("webpage_url"):
-            cache_put(query, v)
-    return videos
+        videos = []
+        for r in results:
+            if isinstance(r, list):
+                videos.extend(r)
+        for v in videos:
+            if v.get("webpage_url"):
+                cache_put(query, v)
+        return videos
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -159,6 +156,19 @@ def download_to_mp3(video_url):
         return None
     return None
 
+def download_and_send(chat_id, video_url):
+    mp3_file = download_to_mp3(video_url)
+    if mp3_file:
+        size = os.path.getsize(mp3_file)
+        if size > MAX_TELEGRAM_FILE:
+            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
+        else:
+            with open(mp3_file, "rb") as f:
+                BOT.send_audio(chat_id, f)
+        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
+    else:
+        BOT.send_message(chat_id, "❌ Download failed.")
+
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
@@ -169,7 +179,7 @@ def cmd_stop(m):
     chat_id = m.chat.id
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
-# ===== SEARCH & SHOW INLINE OPTIONS =====
+# ===== SEARCH & INLINE BUTTONS =====
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
     chat_id = m.chat.id
@@ -188,31 +198,17 @@ def search_and_show_choices(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     markup = InlineKeyboardMarkup()
-    for v in videos[:5]:
+    for v in videos[:5]:  # top 5 results
         btn = InlineKeyboardButton(text=v['title'][:40], callback_data=f"download::{v['webpage_url']}")
         markup.add(btn)
     BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
 
-# ===== CALLBACK HANDLER =====
 @BOT.callback_query_handler(func=lambda call: call.data.startswith("download::"))
 def callback_download(call: CallbackQuery):
     chat_id = call.message.chat.id
     video_url = call.data.split("::", 1)[1]
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
-
-def download_and_send(chat_id, video_url):
-    mp3_file = download_to_mp3(video_url)
-    if mp3_file:
-        size = os.path.getsize(mp3_file)
-        if size > MAX_TELEGRAM_FILE:
-            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
-        else:
-            with open(mp3_file, "rb") as f:
-                BOT.send_audio(chat_id, f)
-        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
-    else:
-        BOT.send_message(chat_id, "❌ Download failed.")
 
 # ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
