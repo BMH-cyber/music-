@@ -4,13 +4,12 @@ from pathlib import Path
 import telebot, aiohttp, requests
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
-from flask import Flask, request
+from flask import Flask
 
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
@@ -60,28 +59,31 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== SEARCH HELPERS =====
+# ===== SEARCH HELPERS (UPDATED) =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
         "noplaylist": True,
         "no_warnings": True,
         "format": "bestaudio/best",
+        "ignoreerrors": True,
+        "default_search": "ytsearch1",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+            info = ydl.extract_info(query, download=False)
             e = (info.get("entries") or [None])[0]
-            if e:
+            if e and e.get("webpage_url"):
                 return {
                     "title": e.get("title"),
-                    "webpage_url": e.get("webpage_url") or e.get("url"),
+                    "webpage_url": e.get("webpage_url"),
                     "id": e.get("id")
                 }
-    except:
+    except Exception as err:
+        print("YouTube search error:", err)
         return None
     return None
 
@@ -107,19 +109,24 @@ async def find_video_for_query(query):
     cached = cache_get(query)
     if cached:
         return cached
+
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
+
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-        for r in results:
-            if isinstance(r, dict) and r.get("webpage_url"):
-                cache_put(query, r)
-                return r
+
+    for r in results:
+        if isinstance(r, dict) and r.get("webpage_url"):
+            cache_put(query, r)
+            return r
+
     direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
     if direct_res and direct_res.get("webpage_url"):
         cache_put(query, direct_res)
         return direct_res
+
     return None
 
 # ===== DOWNLOAD AUDIO =====
@@ -206,27 +213,22 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== FLASK APP FOR WEBHOOK =====
-app = Flask("music4u")
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def telegram_webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
-    BOT.process_new_updates([update])
-    return "!", 200
+# ===== KEEP ALIVE (FOR RAILWAY) =====
+app = Flask("music4u_keepalive")
 
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
-# ===== SET WEBHOOK =====
-def set_webhook():
-    if WEBHOOK_URL:
-        BOT.remove_webhook()
-        BOT.set_webhook(url=WEBHOOK_URL)
-
 # ===== MAIN =====
 if __name__ == "__main__":
-    set_webhook()
-    print("✅ Music4U bot running (Webhook mode)...")
+    # Run Flask in thread
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+    print("✅ Music4U bot running...")
+    # Start polling safely (avoid 409 conflict)
+    while True:
+        try:
+            BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+        except Exception as e:
+            print("⚠️ Polling error:", e)
+            time.sleep(5)
