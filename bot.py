@@ -121,45 +121,8 @@ async def find_videos_for_query(query):
         return videos
 
 # ===== MP3 DOWNLOAD HELPERS =====
-def check_ffmpeg():
-    try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except:
-        return False
-
-def download_to_mp3(video_url):
-    tempdir = tempfile.mkdtemp(prefix="music4u_")
-    outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
-    opts = {
-        "format": "bestaudio/best",
-        "outtmpl": outtmpl,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "postprocessors": []
-    }
-    if check_ffmpeg():
-        opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
-        ]
-    if YTDLP_PROXY:
-        opts["proxy"] = YTDLP_PROXY
-    try:
-        with YoutubeDL(opts) as ydl:
-            ydl.extract_info(video_url, download=True)
-        for f in os.listdir(tempdir):
-            if f.lower().endswith(".mp3"):
-                return os.path.join(tempdir, f)
-    except:
-        shutil.rmtree(tempdir, ignore_errors=True)
-        return None
-    return None
-
-# ===== DOWNLOAD & SEND WITHOUT EXTRA MESSAGES =====
 def download_and_send(chat_id, video_url):
-    # Minimal notice only
-    BOT.send_message(chat_id, "⚡ Downloading...")
+    BOT.send_message(chat_id, "⚡ သီချင်းကို အမြန်ဆုံး Download လုပ်နေပါသည်...")
 
     temp_buffer = BytesIO()
     opts = {
@@ -167,7 +130,7 @@ def download_and_send(chat_id, video_url):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "postprocessors": []
+        "postprocessors": []  # FFmpeg conversion skip
     }
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
@@ -186,10 +149,9 @@ def download_and_send(chat_id, video_url):
                     BOT.send_audio(chat_id, temp_buffer, title=info.get("title"))
                     return
     except:
-        # Ignore fast download errors silently
         pass
 
-    # Fallback mp3 without extra messages
+    # Fallback mp3
     mp3_file = download_to_mp3(video_url)
     if mp3_file:
         size = os.path.getsize(mp3_file)
@@ -198,7 +160,31 @@ def download_and_send(chat_id, video_url):
                 BOT.send_audio(chat_id, f)
         shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
     else:
-        BOT.send_message(chat_id, "❌ Download failed.")
+        BOT.send_message(chat_id, "❌ သီချင်းကို Download မရနိုင်ပါ။")
+
+def download_to_mp3(video_url):
+    tempdir = tempfile.mkdtemp(prefix="music4u_")
+    outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": []
+    }
+    if YTDLP_PROXY:
+        opts["proxy"] = YTDLP_PROXY
+    try:
+        with YoutubeDL(opts) as ydl:
+            ydl.extract_info(video_url, download=True)
+        for f in os.listdir(tempdir):
+            if f.lower().endswith(".mp3"):
+                return os.path.join(tempdir, f)
+    except:
+        shutil.rmtree(tempdir, ignore_errors=True)
+        return None
+    return None
 
 # ===== SEARCH & SEND FAST SINGLE =====
 def search_and_send_fast(chat_id, query):
@@ -206,14 +192,14 @@ def search_and_send_fast(chat_id, query):
     asyncio.set_event_loop(loop)
     videos = loop.run_until_complete(find_videos_for_query(query))
     if not videos:
-        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+        BOT.send_message(chat_id, f"🚫 '{query}' သီချင်းမတွေ့ပါ။")
         return
-    video = videos[0]  # top 1 only
+    video = videos[0]
     url = video.get("webpage_url")
     if url:
         download_and_send(chat_id, url)
     else:
-        BOT.send_message(chat_id, "❌ No valid video URL found.")
+        BOT.send_message(chat_id, "❌ သီချင်း URL မရှိပါ။")
 
 # ===== BOT MESSAGE HANDLER =====
 @BOT.message_handler(func=lambda m: True)
@@ -221,7 +207,7 @@ def handle_message(m):
     chat_id = m.chat.id
     query = (m.text or "").strip()
     if not query or query.startswith("/"):
-        BOT.reply_to(m, "Use /start or type a song name.")
+        BOT.reply_to(m, "✅ /start ကိုနှိပ်ပြီး သီချင်းနာမည် ရိုက်ထည့်ပါ။")
         return
     BOT.send_chat_action(chat_id, "typing")
     THREAD_POOL.submit(search_and_send_fast, chat_id, query)
@@ -229,19 +215,19 @@ def handle_message(m):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download full MP3.")
+    BOT.reply_to(m, "🎶 Music4U သို့ ကြိုဆိုပါသည် — သီချင်းနာမည် ရိုက်ထည့်ပါ, MP3 အပြည့်အစုံ ပို့ပါမည်။")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
     chat_id = m.chat.id
-    BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
+    BOT.send_message(chat_id, "🛑 Queue ဖျက်ပြီး ရပ်ပါပြီ။")
 
 # ===== FLASK SERVER =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Music4U bot is alive"
+    return "✅ Music4U bot ရှိနေပါသည်"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
