@@ -25,8 +25,7 @@ PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
 APP_URL = os.getenv("APP_URL")
-INSTANCE_REFRESH_HOURS = float(os.getenv("INSTANCE_REFRESH_HOURS", 6))  # default 6 hours
-INSTANCE_REFRESH_INTERVAL = INSTANCE_REFRESH_HOURS * 3600  # seconds
+DEFAULT_REFRESH_MINUTES = float(os.getenv("INSTANCE_REFRESH_MINUTES", 30))
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -37,7 +36,6 @@ CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 
 # ===== INVIDIOUS INSTANCES =====
-# Default fallback instances
 INVIDIOUS_INSTANCES = [
     "https://yewtu.be",
     "https://yewtu.cafe",
@@ -46,7 +44,17 @@ INVIDIOUS_INSTANCES = [
     "https://invidious.kavin.rocks"
 ]
 
-# Fetch live instances from GitHub
+# ===== LIVE INSTANCE REFRESH (DYNAMIC) =====
+_refresh_lock = threading.Lock()
+_refresh_interval_seconds = DEFAULT_REFRESH_MINUTES * 60
+
+def set_refresh_interval(minutes: float):
+    """Runtime မှာ refresh interval ပြောင်းချင်ရင်ခေါ်နိုင်သည်"""
+    global _refresh_interval_seconds
+    with _refresh_lock:
+        _refresh_interval_seconds = minutes * 60
+    print(f"🔄 Refresh interval updated to {minutes} minutes")
+
 def fetch_live_invidious_instances():
     url = "https://docs.invidious.io/instances.json"
     try:
@@ -63,13 +71,15 @@ def fetch_live_invidious_instances():
         print("❌ Failed to fetch live instances:", e)
         return []
 
-# Background thread to refresh instances periodically
 def periodic_instance_refresh():
+    global _refresh_interval_seconds
     while True:
         fetch_live_invidious_instances()
-        time.sleep(INSTANCE_REFRESH_INTERVAL)
+        with _refresh_lock:
+            sleep_time = _refresh_interval_seconds
+        time.sleep(sleep_time)
 
-# Start the background refresh thread
+# Start background thread
 threading.Thread(target=periodic_instance_refresh, daemon=True).start()
 
 # ===== CACHE HELPERS =====
@@ -265,7 +275,6 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Fetch once at startup
     fetch_live_invidious_instances()
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
