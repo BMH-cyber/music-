@@ -1,15 +1,17 @@
-import os, json, time, asyncio, threading, tempfile, shutil
-from concurrent.futures import ThreadPoolExecutor
+import os, time, json, threading, tempfile, shutil, asyncio
 from pathlib import Path
-import telebot, aiohttp, requests
-from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
+
+import telebot
+import aiohttp
 from yt_dlp import YoutubeDL
-from flask import Flask, request
+from flask import Flask
+from dotenv import load_dotenv
+import requests
 
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-APP_URL = os.getenv("APP_URL")  # ex: https://yourapp.up.railway.app
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
@@ -149,7 +151,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== PROCESSING QUEUE =====
+# ===== PROCESS QUEUE =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -180,24 +182,24 @@ def process_queue(chat_id):
     finally:
         ACTIVE.pop(chat_id, None)
 
-# ===== BOT HANDLERS =====
+# ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
-def cmd_start(message):
-    BOT.reply_to(message, "🎶 Welcome to Music4U — Type song name to download as MP3.")
+def cmd_start(m):
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
 
 @BOT.message_handler(commands=["stop"])
-def cmd_stop(message):
-    chat_id = message.chat.id
+def cmd_stop(m):
+    chat_id = m.chat.id
     CHAT_QUEUE[chat_id] = []
     ACTIVE.pop(chat_id, None)
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
 @BOT.message_handler(func=lambda m: True)
-def on_message(message):
-    chat_id = message.chat.id
-    text = (message.text or "").strip()
+def on_message(m):
+    chat_id = m.chat.id
+    text = (m.text or "").strip()
     if not text or text.startswith("/"):
-        BOT.reply_to(message, "Use /start or type a song name.")
+        BOT.reply_to(m, "Use /start or type a song name.")
         return
     if chat_id not in CHAT_QUEUE:
         CHAT_QUEUE[chat_id] = []
@@ -206,23 +208,16 @@ def on_message(message):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== FLASK + WEBHOOK =====
-app = Flask("music4u_keepalive")
+# ===== KEEP ALIVE (Flask) =====
+def keep_alive():
+    app = Flask("music4u_keepalive")
+    @app.route("/")
+    def home():
+        return "✅ Music4U bot is alive"
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
-    BOT.process_new_updates([update])
-    return "!", 200
-
-@app.route("/")
-def index():
-    return "✅ Music4U bot is running", 200
-
+# ===== MAIN =====
 if __name__ == "__main__":
-    # Telegram webhook set (one-time)
-    BOT.remove_webhook()
-    BOT.set_webhook(url=f"{APP_URL}/{TOKEN}")
-    print("✅ Music4U bot webhook set and running")
-    app.run(host="0.0.0.0", port=PORT)
+    keep_alive()
+    print("✅ Music4U bot running...")
+    BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
