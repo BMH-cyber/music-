@@ -1,20 +1,27 @@
-import os, time, json, asyncio, threading, tempfile, shutil
-from concurrent.futures import ThreadPoolExecutor
+import os
+import time
+import json
+import shutil
+import tempfile
+import threading
+import asyncio
 from pathlib import Path
-import telebot, aiohttp, requests
-from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
+
+import telebot
+import aiohttp
 from yt_dlp import YoutubeDL
 from flask import Flask
+from dotenv import load_dotenv
 
 # ===== LOAD CONFIG =====
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
-# ===== TELEBOT SETUP =====
-BOT = telebot.TeleBot(TOKEN, parse_mode=None)
+BOT = telebot.TeleBot(BOT_TOKEN)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
@@ -87,7 +94,7 @@ def ytdlp_search_sync(query, use_proxy=True):
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
+            url = f"{base.rstrip('/')}/api/v1/search?q={query}&type=video&per_page=1"
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
@@ -148,7 +155,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== PROCESSING QUEUE =====
+# ===== PROCESS QUEUE =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -205,23 +212,20 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (Flask) =====
-app = Flask(__name__)
+# ===== KEEP ALIVE (for Railway) =====
+app = Flask("music4u_keepalive")
 
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
-def keep_alive():
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT)
 
-# ===== MAIN =====
+def run_bot():
+    BOT.infinity_polling(skip_pending=True)
+
 if __name__ == "__main__":
-    keep_alive()
+    threading.Thread(target=run_flask, daemon=True).start()
     print("✅ Music4U bot running...")
-    while True:
-        try:
-            BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
-        except Exception as e:
-            print("⚠️ Polling error:", e)
-            time.sleep(5)
+    run_bot()
