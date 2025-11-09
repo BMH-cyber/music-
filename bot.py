@@ -14,8 +14,13 @@ import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
-from googlesearch import search  # pip install googlesearch-python
 import subprocess
+
+# Optional Google search
+try:
+    from googlesearch import search  # pip install googlesearch-python
+except ImportError:
+    search = None
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -29,8 +34,6 @@ SOUNDCLOUD_CLIENT_ID = os.getenv("SOUNDCLOUD_CLIENT_ID", "")
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
-
-# ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 INVIDIOUS_INSTANCES = [
@@ -39,6 +42,7 @@ INVIDIOUS_INSTANCES = [
     "https://invidious.privacydev.net"
 ]
 
+# ===== CACHE SYSTEM =====
 def load_cache():
     if CACHE_FILE.exists():
         try:
@@ -113,10 +117,12 @@ async def invidious_search(query, session, timeout=5):
             continue
     return None
 
-def google_search(query):
+def google_search_fallback(query):
+    if not search:
+        return None
     try:
-        for url in search(query + " site:soundcloud.com", num_results=5):
-            if "soundcloud.com" in url:
+        for url in search(query, num_results=5):
+            if "youtube.com/watch" in url or "soundcloud.com" in url:
                 return url
     except:
         pass
@@ -126,7 +132,6 @@ async def find_video_for_query(query):
     cached = cache_get(query)
     if cached:
         return cached
-
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
     async with aiohttp.ClientSession() as session:
@@ -136,18 +141,17 @@ async def find_video_for_query(query):
             if isinstance(r, dict) and r.get("webpage_url"):
                 cache_put(query, r)
                 return r
-
-    # Google/SoundCloud fallback
-    sc_url = google_search(query)
-    if sc_url:
-        r = {"title": query, "webpage_url": sc_url, "id": query}
-        cache_put(query, r)
-        return r
-
     direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
     if direct_res and direct_res.get("webpage_url"):
         cache_put(query, direct_res)
         return direct_res
+    # Google fallback
+    fallback_url = google_search_fallback(query)
+    if fallback_url:
+        title = query
+        r = {"title": title, "webpage_url": fallback_url, "id": ""}
+        cache_put(query, r)
+        return r
     return None
 
 # ===== DOWNLOAD AUDIO =====
@@ -251,4 +255,5 @@ if __name__ == "__main__":
         print(f"✅ Webhook set to {webhook_url}")
 
     print("✅ Music4U bot running...")
+    # Start Flask server
     app.run(host="0.0.0.0", port=PORT)
