@@ -23,7 +23,6 @@ def download_and_send(message, query):
     status_msg = bot.send_message(message.chat.id, f"'{query}' သီချင်း download လုပ်နေပါသည်...")
 
     try:
-        # YouTube search
         video = VideosSearch(query, limit=1).result()['result'][0]
         url = video['link']
         yt = YouTube(url)
@@ -34,7 +33,6 @@ def download_and_send(message, query):
         audio_stream.stream_to_buffer(audio_file)
         audio_file.seek(0)
 
-        # Send audio
         bot.send_audio(message.chat.id, audio_file, title=yt.title)
         bot.delete_message(message.chat.id, status_msg.message_id)
 
