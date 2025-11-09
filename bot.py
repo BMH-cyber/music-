@@ -33,31 +33,6 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 
-INVIDIOUS_INSTANCES = [
-    "https://yewtu.be",
-    "https://yewtu.cafe",
-    "https://invidious.snopyta.org",
-    "https://vid.puffyan.us",
-    "https://invidious.kavin.rocks"
-]
-
-def refresh_invidious_instances():
-    global INVIDIOUS_INSTANCES
-    # maintain default/fallback instances
-    INVIDIOUS_INSTANCES = [
-        "https://yewtu.be",
-        "https://yewtu.cafe",
-        "https://invidious.snopyta.org",
-        "https://vid.puffyan.us",
-        "https://invidious.kavin.rocks"
-    ]
-    print("🔄 Refreshed Invidious instances")
-
-async def schedule_instance_refresh():
-    while True:
-        refresh_invidious_instances()
-        await asyncio.sleep(30*60)  # 30 minutes
-
 def load_cache():
     if CACHE_FILE.exists():
         try:
@@ -88,6 +63,32 @@ def cache_put(q, info):
         "webpage_url": info.get("webpage_url")
     }
     save_cache(_cache)
+
+# ===== INVIDIOUS INSTANCES =====
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://yewtu.cafe",
+    "https://invidious.snopyta.org",
+    "https://vid.puffyan.us",
+    "https://invidious.kavin.rocks"
+]
+
+async def refresh_invidious_instances():
+    # Update fresh instances every 30 minutes
+    url = "https://api.invidious.io/instances.json"
+    while True:
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
+            if instances:
+                global INVIDIOUS_INSTANCES
+                INVIDIOUS_INSTANCES = instances
+                print(f"✅ Refreshed {len(instances)} Invidious instances")
+        except Exception as e:
+            print("❌ Failed to refresh instances:", e)
+        await asyncio.sleep(1800)  # 30 minutes
 
 # ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
@@ -138,6 +139,11 @@ async def find_videos_for_query(query):
     for r in results:
         if isinstance(r, list):
             videos.extend(r)
+    # fallback: if nothing found, retry yt-dlp only
+    if not videos:
+        print(f"⚠️ No result found in Invidious, trying yt-dlp fallback")
+        yt_fallback = ytdlp_search_sync(query, True)
+        videos.extend(yt_fallback)
     for v in videos:
         if v.get("webpage_url"):
             cache_put(query, v)
@@ -234,7 +240,7 @@ def callback_download(call: CallbackQuery):
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
 
-# ===== FLASK SERVER =====
+# ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -251,13 +257,11 @@ def webhook():
 # ===== MAIN =====
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.create_task(schedule_instance_refresh())  # refresh every 30 mins
-    
+    loop.create_task(refresh_invidious_instances())  # auto-refresh instances
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
-    
     print("✅ Music4U bot running...")
     app.run(host="0.0.0.0", port=PORT)
