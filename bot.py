@@ -10,7 +10,6 @@ import subprocess
 import urllib.parse
 
 import telebot
-from telebot.types import CallbackQuery
 import aiohttp
 import requests
 from yt_dlp import YoutubeDL
@@ -145,7 +144,7 @@ async def find_videos_for_query(query):
     for v in videos:
         if v.get("webpage_url"):
             cache_put(query, v)
-    return videos[:1]  # ✅ Return only the first video
+    return videos[:1]  # ✅ Only first result
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -155,7 +154,7 @@ def check_ffmpeg():
     except:
         return False
 
-def download_to_mp3(video_url):
+def download_to_audio(video_url):
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
     opts = {
@@ -168,7 +167,7 @@ def download_to_mp3(video_url):
     }
     if check_ffmpeg():
         opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+            {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "128"}
         ]
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
@@ -176,7 +175,7 @@ def download_to_mp3(video_url):
         with YoutubeDL(opts) as ydl:
             ydl.extract_info(video_url, download=True)
         for f in os.listdir(tempdir):
-            if f.lower().endswith(".mp3"):
+            if f.lower().endswith((".mp3", ".m4a")):
                 return os.path.join(tempdir, f)
     except:
         shutil.rmtree(tempdir, ignore_errors=True)
@@ -185,22 +184,22 @@ def download_to_mp3(video_url):
 
 def download_and_send(chat_id, video_url):
     BOT.send_chat_action(chat_id, "upload_audio")
-    mp3_file = download_to_mp3(video_url)
-    if mp3_file:
-        size = os.path.getsize(mp3_file)
+    audio_file = download_to_audio(video_url)
+    if audio_file:
+        size = os.path.getsize(audio_file)
         if size > MAX_TELEGRAM_FILE:
             BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
         else:
-            with open(mp3_file, "rb") as f:
+            with open(audio_file, "rb") as f:
                 BOT.send_audio(chat_id, f)
-        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
+        shutil.rmtree(os.path.dirname(audio_file), ignore_errors=True)
     else:
         BOT.send_message(chat_id, "❌ Download failed.")
 
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as MP3.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as audio.")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
