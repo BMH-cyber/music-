@@ -59,31 +59,28 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== SEARCH HELPERS (UPDATED) =====
+# ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
         "noplaylist": True,
         "no_warnings": True,
         "format": "bestaudio/best",
-        "ignoreerrors": True,
-        "default_search": "ytsearch1",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(query, download=False)
+            info = ydl.extract_info(f"ytsearch1:{query}", download=False)
             e = (info.get("entries") or [None])[0]
-            if e and e.get("webpage_url"):
+            if e:
                 return {
                     "title": e.get("title"),
-                    "webpage_url": e.get("webpage_url"),
+                    "webpage_url": e.get("webpage_url") or e.get("url"),
                     "id": e.get("id")
                 }
-    except Exception as err:
-        print("YouTube search error:", err)
+    except:
         return None
     return None
 
@@ -109,24 +106,19 @@ async def find_video_for_query(query):
     cached = cache_get(query)
     if cached:
         return cached
-
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
-
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-
-    for r in results:
-        if isinstance(r, dict) and r.get("webpage_url"):
-            cache_put(query, r)
-            return r
-
+        for r in results:
+            if isinstance(r, dict) and r.get("webpage_url"):
+                cache_put(query, r)
+                return r
     direct_res = await loop.run_in_executor(None, ytdlp_search_sync, query, False)
     if direct_res and direct_res.get("webpage_url"):
         cache_put(query, direct_res)
         return direct_res
-
     return None
 
 # ===== DOWNLOAD AUDIO =====
@@ -190,7 +182,7 @@ def process_queue(chat_id):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as MP3.")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -213,19 +205,18 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (FOR RAILWAY) =====
+# ===== KEEP ALIVE (for Railway) =====
 app = Flask("music4u_keepalive")
-
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Run Flask in thread
+    # Start Flask server in a thread for keep-alive
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
     print("✅ Music4U bot running...")
-    # Start polling safely (avoid 409 conflict)
+    # Start polling (single instance, no 409 conflict)
     while True:
         try:
             BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
