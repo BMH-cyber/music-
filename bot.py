@@ -1,36 +1,33 @@
-# bot.py (Music4U - upgraded)
 import os
 import json
 import time
 import asyncio
+import threading
 import tempfile
 import shutil
-import traceback
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiohttp
 import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
 import subprocess
+from googlesearch import search  # pip install googlesearch-python
 
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = int(os.getenv("MAX_TELEGRAM_FILE", 30 * 1024 * 1024))  # default 30MB
-APP_URL = os.getenv("APP_URL")
-SOUNDCLOUD_CLIENT_ID = os.getenv("SOUNDCLOUD_CLIENT_ID", "")
+MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
+APP_URL = os.getenv("APP_URL")  # https://your-app.up.railway.app
 
-# ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
-
-# ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 INVIDIOUS_INSTANCES = [
@@ -39,6 +36,7 @@ INVIDIOUS_INSTANCES = [
     "https://invidious.privacydev.net"
 ]
 
+# ===== CACHE =====
 def load_cache():
     if CACHE_FILE.exists():
         try:
@@ -54,8 +52,7 @@ _cache = load_cache()
 
 def cache_get(q):
     item = _cache.get(q.lower().strip())
-    if not item:
-        return None
+    if not item: return None
     if time.time() - item.get("ts", 0) > CACHE_TTL_DAYS * 86400:
         _cache.pop(q, None)
         save_cache(_cache)
@@ -71,43 +68,14 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== Utilities =====
-def check_ffmpeg():
-    return shutil.which("ffmpeg") is not None
-
-def get_cookies_path():
-    env = os.getenv("COOKIES_FILE")
-    if env and os.path.exists(env):
-        return env
-    for p in ("./cookies.txt", "/tmp/cookies.txt"):
-        if os.path.exists(p):
-            return p
-    return None
-
-def is_signin_required_error(err_text):
-    if not err_text:
-        return False
-    s = err_text.lower()
-    keywords = [
-        "sign in to confirm",
-        "sign in to confirm you’re not a bot",
-        "sign in to confirm you’re not a robot",
-        "use --cookies",
-        "verify you are human",
-        "sign in to continue"
-    ]
-    return any(k in s for k in keywords)
-
 # ===== SEARCH HELPERS =====
-def ytdlp_search_top_results(query, max_results=5, use_proxy=True):
+def ytdlp_search_sync(query, use_proxy=True, max_results=5):
     opts = {
         "quiet": True,
         "noplaylist": True,
         "no_warnings": True,
         "format": "bestaudio/best",
-        "extract_flat": True,
-        "skip_download": True,
-        "http_headers": {"User-Agent": "Mozilla/5.0"},
+        "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
@@ -115,299 +83,143 @@ def ytdlp_search_top_results(query, max_results=5, use_proxy=True):
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
-            for e in (info.get("entries") or []):
-                # e might have 'url' as id
-                url = e.get("url") or e.get("webpage_url") or (f"https://www.youtube.com/watch?v={e.get('id')}")
+            entries = info.get("entries") or []
+            for e in entries:
                 results.append({
                     "title": e.get("title"),
-                    "webpage_url": url,
-                    "id": e.get("id") or url
+                    "webpage_url": e.get("webpage_url") or e.get("url"),
+                    "id": e.get("id")
                 })
-    except Exception as e:
-        print("ytdlp_search_top_results error:", e)
+    except:
+        return []
     return results
 
-async def invidious_search(query, session, timeout=5):
+async def invidious_search(query, session, max_results=5):
     for base in INVIDIOUS_INSTANCES:
         try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
-            async with session.get(url, timeout=timeout) as resp:
-                if resp.status != 200:
-                    continue
+            url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page={max_results}"
+            async with session.get(url, timeout=5) as resp:
+                if resp.status != 200: continue
                 data = await resp.json()
-                if data:
-                    v = data[0]
-                    return {
+                results = []
+                for v in data[:max_results]:
+                    results.append({
                         "title": v.get("title"),
                         "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
                         "id": v.get("videoId")
-                    }
-        except Exception as e:
-            print("invidious_search error for", base, ":", e)
+                    })
+                return results
+        except:
             continue
-    return None
+    return []
 
-def google_search_fallback_sync(query, max_results=5):
-    try:
-        from googlesearch import search
-    except Exception as e:
-        # not installed
-        print("googlesearch not available:", e)
-        return None
-    try:
-        for url in search(query + " mp3", num_results=max_results):
-            if url and url.lower().endswith(".mp3"):
-                return {"title": query, "webpage_url": url, "id": url}
-    except Exception as e:
-        print("google_search_fallback_sync error:", e)
-    return None
-
-def soundcloud_search_sync(query):
-    if not SOUNDCLOUD_CLIENT_ID:
-        return None
-    try:
-        url = f"https://api-v2.soundcloud.com/search/tracks?q={requests.utils.requote_uri(query)}&client_id={SOUNDCLOUD_CLIENT_ID}&limit=1"
-        resp = requests.get(url, timeout=6)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("collection"):
-                t = data["collection"][0]
-                return {"title": t.get("title"), "webpage_url": t.get("permalink_url"), "id": t.get("id")}
-    except Exception as e:
-        print("soundcloud_search_sync error:", e)
-    return None
-
-def vidmate_search_sync(query):
-    # lightweight attempt: search web for vidmate mp3 mirrors via google (sync)
-    res = google_search_fallback_sync(query + " vidmate mp3")
-    return res
-
-# ===== FIND VIDEO (multi-source, multi-result) =====
 async def find_video_for_query(query):
-    # 1) cache
     cached = cache_get(query)
     if cached:
-        return cached
-
+        return [cached]
     loop = asyncio.get_event_loop()
-    results = []
-
-    # 2) YouTube top results (sync called in executor)
-    try:
-        yt_results = await loop.run_in_executor(None, ytdlp_search_top_results, query, 5, True)
-        if yt_results:
-            results.extend(yt_results)
-    except Exception as e:
-        print("yt search executor error:", e)
-
-    # 3) Invidious fallback
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True, 5)
     async with aiohttp.ClientSession() as session:
-        try:
-            inv = await invidious_search(query, session)
-            if inv:
-                results.append(inv)
-        except Exception as e:
-            print("invidious search gather error:", e)
-
-    # 4) direct yt-dlp without proxy
-    try:
-        direct = await loop.run_in_executor(None, ytdlp_search_top_results, query, 3, False)
-        if direct:
-            results.extend(direct)
-    except Exception as e:
-        print("direct yt search error:", e)
-
-    # 5) Google mp3 fallback (sync)
-    try:
-        g = await loop.run_in_executor(None, google_search_fallback_sync, query, 5)
-        if g:
-            results.append(g)
-    except Exception as e:
-        print("google fallback error:", e)
-
-    # 6) SoundCloud fallback (sync)
-    try:
-        sc = await loop.run_in_executor(None, soundcloud_search_sync, query)
-        if sc:
-            results.append(sc)
-    except Exception as e:
-        print("soundcloud fallback error:", e)
-
-    # 7) Vidmate fallback
-    try:
-        v = await loop.run_in_executor(None, vidmate_search_sync, query)
-        if v:
-            results.append(v)
-    except Exception as e:
-        print("vidmate fallback error:", e)
-
-    # return first valid result
+        inv_future = invidious_search(query, session, 5)
+        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
+    final = []
     for r in results:
-        if r and r.get("webpage_url"):
-            cache_put(query, r)
-            return r
+        if isinstance(r, list):
+            for item in r:
+                final.append(item)
+                cache_put(query, item)
+    if final:
+        return final
+    # Fallback: Google search for direct mp3 links
+    google_results = []
+    try:
+        for url in search(query + " mp3", num_results=5):
+            if url.endswith(".mp3"):
+                google_results.append({"title": url.split("/")[-1], "webpage_url": url, "id": url})
+        if google_results:
+            return google_results
+    except:
+        pass
+    return []
+
+# ===== DOWNLOAD =====
+def check_ffmpeg():
+    try:
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except:
+        return False
+
+def download_to_mp3(video_url):
+    tempdir = tempfile.mkdtemp(prefix="music4u_")
+    outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": []
+    }
+    if check_ffmpeg():
+        opts["postprocessors"] = [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+        ]
+    if YTDLP_PROXY:
+        opts["proxy"] = YTDLP_PROXY
+    try:
+        with YoutubeDL(opts) as ydl:
+            ydl.extract_info(video_url, download=True)
+        for f in os.listdir(tempdir):
+            if f.lower().endswith(".mp3"):
+                return os.path.join(tempdir, f)
+    except:
+        shutil.rmtree(tempdir, ignore_errors=True)
+        return None
     return None
 
-# ===== DOWNLOAD WITH COOKIE AUTO-RETRY =====
-def download_to_mp3_with_retry(video_url, title_hint=None):
-    """
-    Try download using yt-dlp. If sign-in required error appears, retry with cookies if available.
-    Returns path to mp3 file or None.
-    """
-    def _attempt(cookiefile=None):
-        tmpdir = tempfile.mkdtemp(prefix="music4u_")
-        outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
-        opts = {
-            "format": "bestaudio/best",
-            "outtmpl": outtmpl,
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": True,
-        }
-        if check_ffmpeg():
-            opts["postprocessors"] = [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
-            ]
-        if YTDLP_PROXY:
-            opts["proxy"] = YTDLP_PROXY
-        if cookiefile:
-            opts["cookiefile"] = cookiefile
-
-        try:
-            with YoutubeDL(opts) as ydl:
-                ydl.extract_info(video_url, download=True)
-            # find mp3
-            for f in os.listdir(tmpdir):
-                if f.lower().endswith(".mp3"):
-                    return os.path.join(tmpdir, f), None
-            # if no file found, cleanup and treat as fail
-            shutil.rmtree(tmpdir, ignore_errors=True)
-            return None, "no_mp3_found"
-        except Exception as e:
-            tb = traceback.format_exc()
-            shutil.rmtree(tmpdir, ignore_errors=True)
-            return None, str(e) + "\n" + tb
-
-    # attempt without cookies
-    path, err = _attempt(cookiefile=None)
-    if path:
-        return path
-
-    # if error suggests sign-in/captcha then try cookies if available
-    if err and is_signin_required_error(err):
-        cookies = get_cookies_path()
-        if cookies:
-            print("🔁 Retrying with cookies:", cookies)
-            path2, err2 = _attempt(cookiefile=cookies)
-            if path2:
-                return path2
-            print("❌ Cookie retry failed:", err2)
+# ===== QUEUE PROCESS =====
+def send_mp3(chat_id, info):
+    mp3_file = download_to_mp3(info["webpage_url"])
+    if mp3_file:
+        size = os.path.getsize(mp3_file)
+        if size > MAX_TELEGRAM_FILE:
+            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
         else:
-            print("⚠️ Sign-in required but no cookies found.")
+            with open(mp3_file, "rb") as f:
+                BOT.send_audio(chat_id, f, title=info["title"])
+        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
+    else:
+        BOT.send_message(chat_id, f"❌ Download failed: {info['title']}")
 
-    # final: no success
-    print("download_to_mp3_with_retry final fail for:", video_url, "err:", err)
-    return None
-
-# ===== PROCESSING QUEUE =====
 def process_queue(chat_id, query):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    try:
-        BOT.send_message(chat_id, f"🔎 Searching: {query} ...")
-        video_info = loop.run_until_complete(find_video_for_query(query))
-        if not video_info:
-            BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
-            return
+    results = loop.run_until_complete(find_video_for_query(query))
+    if not results:
+        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+        return
+    # If multiple results, show inline keyboard
+    if len(results) > 1:
+        markup = InlineKeyboardMarkup()
+        for i, item in enumerate(results[:5]):
+            markup.add(InlineKeyboardButton(item["title"], callback_data=f"download_{i}"))
+        CHAT_QUEUE[chat_id] = results
+        BOT.send_message(chat_id, "Select a song:", reply_markup=markup)
+    else:
+        send_mp3(chat_id, results[0])
 
-        BOT.send_message(chat_id, f"🎵 Found: {video_info.get('title')}\n⬇️ Downloading now...")
-        # try to download the chosen candidate; if fails, try other candidates from search list
-        # build candidate list (first try cached/primary, then re-run multi-search to get list)
-        candidates = []
-        # primary candidate
-        candidates.append(video_info)
-        # supplement with top yt results (sync)
-        try:
-            more = ytdlp_search_top_results(query, 5, True)
-            for m in more:
-                if m.get("webpage_url") and m.get("webpage_url") not in [c.get("webpage_url") for c in candidates]:
-                    candidates.append(m)
-        except Exception as e:
-            print("error fetching supplemental yt results:", e)
-
-        # also add invidious / google / soundcloud quick checks
-        try:
-            import asyncio as _a
-            _loop = asyncio.get_event_loop()
-            # invidious
-            async def _gather_fallbacks(q):
-                out = []
-                async with aiohttp.ClientSession() as session:
-                    inv = await invidious_search(q, session)
-                    if inv: out.append(inv)
-                g = await _loop.run_in_executor(None, google_search_fallback_sync, q, 5)
-                if g: out.append(g)
-                sc = await _loop.run_in_executor(None, soundcloud_search_sync, q)
-                if sc: out.append(sc)
-                vm = await _loop.run_in_executor(None, vidmate_search_sync, q)
-                if vm: out.append(vm)
-                return out
-            additional = loop.run_until_complete(_gather_fallbacks(query))
-            for a in additional:
-                if a and a.get("webpage_url") and a.get("webpage_url") not in [c.get("webpage_url") for c in candidates]:
-                    candidates.append(a)
-        except Exception as e:
-            print("gather additional candidates error:", e)
-
-        # try each candidate until mp3 produced
-        mp3_file = None
-        used_title = video_info.get("title", query)
-        for cand in candidates:
-            url = cand.get("webpage_url")
-            if not url:
-                continue
-            print("Trying candidate:", url)
-            mp3_file = download_to_mp3_with_retry(url, title_hint=cand.get("title"))
-            if mp3_file:
-                used_title = cand.get("title") or used_title
-                break
-            else:
-                print("candidate failed, continuing to next.")
-
-        # final fallback: google mp3 direct (sync)
-        if not mp3_file:
-            try:
-                g = google_search_fallback_sync(query, 8)
-                if g and g.get("webpage_url"):
-                    print("Trying google mp3 direct:", g.get("webpage_url"))
-                    mp3_file = download_to_mp3_with_retry(g.get("webpage_url"))
-                    used_title = g.get("title") or used_title
-            except Exception as e:
-                print("google direct final fallback error:", e)
-
-        # result handling
-        if mp3_file:
-            try:
-                size = os.path.getsize(mp3_file)
-                if size > MAX_TELEGRAM_FILE:
-                    BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
-                else:
-                    with open(mp3_file, "rb") as f:
-                        BOT.send_audio(chat_id, f, title=used_title)
-                    BOT.send_message(chat_id, "✅ Done!")
-            finally:
-                shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
-        else:
-            BOT.send_message(chat_id, f"❌ Download failed: {query} (tried multiple sources)")
-    except Exception as e:
-        print("process_queue unexpected error:", traceback.format_exc())
-        try:
-            BOT.send_message(chat_id, f"❌ Error processing: {e}")
-        except:
-            pass
+# ===== CALLBACK =====
+@BOT.callback_query_handler(func=lambda call: call.data.startswith("download_"))
+def callback_download(call):
+    chat_id = call.message.chat.id
+    idx = int(call.data.split("_")[1])
+    info = CHAT_QUEUE.get(chat_id, [])[idx]
+    BOT.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
+    send_mp3(chat_id, info)
 
 # ===== BOT COMMANDS =====
-@BOT.message_handler(commands=["start", "help"])
+@BOT.message_handler(commands=["start","help"])
 def cmd_start(m):
     BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
 
@@ -426,7 +238,7 @@ def on_message(m):
     BOT.send_chat_action(chat_id, "typing")
     THREAD_POOL.submit(process_queue, chat_id, text)
 
-# ===== FLASK SERVER FOR WEBHOOK =====
+# ===== FLASK =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -442,13 +254,10 @@ def webhook():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Set webhook
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
-
     print("✅ Music4U bot running...")
-    # Start Flask server
     app.run(host="0.0.0.0", port=PORT)
