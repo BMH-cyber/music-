@@ -1,4 +1,4 @@
-import os, json, time, asyncio, threading, tempfile, shutil
+import os, sys, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
@@ -6,20 +6,21 @@ from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 
-# ===== CONFIG =====
+# ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-APP_URL = os.getenv("APP_URL")
+APP_URL = os.getenv("APP_URL")  # e.g., https://music-production-fecd.up.railway.app
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
+# ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
 
-# ===== CACHE =====
+# ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 INVIDIOUS_INSTANCES = [
@@ -59,7 +60,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== SEARCH =====
+# ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
@@ -121,7 +122,7 @@ async def find_video_for_query(query):
         return direct_res
     return None
 
-# ===== DOWNLOAD =====
+# ===== DOWNLOAD AUDIO =====
 def download_to_mp3(video_url):
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
@@ -148,7 +149,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== QUEUE =====
+# ===== PROCESSING QUEUE =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -179,7 +180,7 @@ def process_queue(chat_id):
     finally:
         ACTIVE.pop(chat_id, None)
 
-# ===== BOT HANDLERS =====
+# ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
     BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
@@ -201,29 +202,29 @@ def on_message(m):
     if chat_id not in CHAT_QUEUE:
         CHAT_QUEUE[chat_id] = []
     CHAT_QUEUE[chat_id].append(text)
+    THREAD_POOL.submit(process_queue, chat_id)
     BOT.send_chat_action(chat_id, "typing")
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
-    THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== FLASK APP =====
+# ===== FLASK WEBHOOK SERVER =====
 app = Flask("music4u_keepalive")
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    BOT.process_new_updates([update])
+    return "!", 200
 
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
-WEBHOOK_PATH = f"/{TOKEN}"
+# ===== SET WEBHOOK =====
 BOT.remove_webhook()
-BOT.set_webhook(url=APP_URL + WEBHOOK_PATH)
+BOT.set_webhook(url=f"{APP_URL}/{TOKEN}")
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def telegram_webhook():
-    json_data = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_data)
-    BOT.process_new_updates([update])
-    return "OK"
-
-# ===== NOTE =====
-# Do NOT call app.run() here
-# Start with gunicorn:
-# gunicorn bot:app -b 0.0.0.0:$PORT
+# ===== RUN =====
+if __name__ == "__main__":
+    print("✅ Music4U bot running (Webhook mode)...")
+    # Gunicorn will serve Flask app, no need for BOT.infinity_polling()
