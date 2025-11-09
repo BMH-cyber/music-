@@ -34,6 +34,17 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 
+# ===== INVIDIOUS INSTANCES =====
+# Default fallback instances
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://yewtu.cafe",
+    "https://invidious.snopyta.org",
+    "https://vid.puffyan.us",
+    "https://invidious.kavin.rocks"
+]
+
+# ===== CACHE FUNCTIONS =====
 def load_cache():
     if CACHE_FILE.exists():
         try:
@@ -65,46 +76,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== INVIDIOUS INSTANCES =====
-INVIDIOUS_INSTANCES = [
-    "https://yewtu.be",
-    "https://yewtu.cafe",
-    "https://invidious.snopyta.org",
-    "https://vid.puffyan.us",
-    "https://invidious.kavin.rocks"
-]
-
-# Fetch live Invidious instances
-def fetch_live_invidious_instances():
-    url = "https://docs.invidious.io/instances.json"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
-        if instances:
-            global INVIDIOUS_INSTANCES
-            INVIDIOUS_INSTANCES = instances
-            print(f"✅ Fetched {len(instances)} live Invidious instances")
-        return instances
-    except Exception as e:
-        print("❌ Failed to fetch live instances:", e)
-        return []
-
-# Start background thread to refresh every 30 min
-def refresh_invidious_loop():
-    while True:
-        try:
-            print("🔄 Refreshing Invidious instances...")
-            fetch_live_invidious_instances()
-        except Exception as e:
-            print("❌ Refresh loop error:", e)
-        time.sleep(30 * 60)  # 30 minutes
-
-threading.Thread(target=refresh_invidious_loop, daemon=True).start()
-fetch_live_invidious_instances()
-
-# ===== SEARCH HELPERS =====
+# ===== YT-DLP SEARCH =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
@@ -124,6 +96,7 @@ def ytdlp_search_sync(query, use_proxy=True):
         print("yt-dlp search error:", e)
         return []
 
+# ===== INVIDIOUS SEARCH =====
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
@@ -131,47 +104,35 @@ async def invidious_search(query, session, timeout=5):
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
-                if data:
-                    return [{
-                        "title": v.get("title"),
-                        "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
-                        "id": v.get("videoId")
-                    } for v in data]
-        except Exception as e:
-            print(f"Invidious search failed for {base}: {e}")
+                return [{
+                    "title": v.get("title"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
+                    "id": v.get("videoId")
+                } for v in data]
+        except:
             continue
     return []
 
-async def find_videos_for_query(query, retries=2):
+# ===== FIND VIDEOS =====
+async def find_videos_for_query(query):
     cached = cache_get(query)
     if cached:
         return [cached]
-
     loop = asyncio.get_event_loop()
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
+    async with aiohttp.ClientSession() as session:
+        inv_future = invidious_search(query, session)
+        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
+    videos = []
+    for r in results:
+        if isinstance(r, list):
+            videos.extend(r)
+    for v in videos:
+        if v.get("webpage_url"):
+            cache_put(query, v)
+    return videos
 
-    for attempt in range(retries):
-        yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
-        async with aiohttp.ClientSession() as session:
-            inv_future = invidious_search(query, session)
-            results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-
-        videos = []
-        for r in results:
-            if isinstance(r, list):
-                videos.extend(r)
-
-        if videos:
-            for v in videos:
-                if v.get("webpage_url"):
-                    cache_put(query, v)
-            return videos
-        else:
-            print(f"⚠️ Attempt {attempt+1} failed, retrying in 3 seconds...")
-            await asyncio.sleep(3)
-
-    return []
-
-# ===== DOWNLOAD AUDIO =====
+# ===== DOWNLOAD MP3 =====
 def check_ffmpeg():
     try:
         subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -262,7 +223,7 @@ def callback_download(call: CallbackQuery):
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
 
-# ===== FLASK SERVER FOR WEBHOOK =====
+# ===== FLASK SERVER =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -275,6 +236,25 @@ def webhook():
     update = telebot.types.Update.de_json(json_str)
     BOT.process_new_updates([update])
     return "ok", 200
+
+# ===== INVIDIOUS REFRESH THREAD =====
+def refresh_invidious_instances_periodically(interval=1800):  # 30 min
+    while True:
+        try:
+            url = "https://api.invidious.io/instances.json"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
+            if instances:
+                global INVIDIOUS_INSTANCES
+                INVIDIOUS_INSTANCES = instances
+                print(f"🔄 Refreshed {len(instances)} Invidious instances")
+        except Exception as e:
+            print("❌ Failed to refresh instances:", e)
+        time.sleep(interval)
+
+threading.Thread(target=refresh_invidious_instances_periodically, daemon=True).start()
 
 # ===== MAIN =====
 if __name__ == "__main__":
