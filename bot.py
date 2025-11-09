@@ -33,6 +33,8 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 
+# ===== INVIDIOUS INSTANCES =====
+# Default fallback instances
 INVIDIOUS_INSTANCES = [
     "https://yewtu.be",
     "https://yewtu.cafe",
@@ -40,6 +42,28 @@ INVIDIOUS_INSTANCES = [
     "https://vid.puffyan.us",
     "https://invidious.kavin.rocks"
 ]
+
+# Optional: Fetch live instances from GitHub and update INVIDIOUS_INSTANCES
+def fetch_live_invidious_instances():
+    url = "https://docs.invidious.io/instances.json"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        # Filter HTTPS instances only
+        instances = [inst["uri"] for inst in data if inst.get("type") == "https"]
+        if instances:
+            global INVIDIOUS_INSTANCES
+            INVIDIOUS_INSTANCES = instances
+            print(f"✅ Fetched {len(instances)} live Invidious instances")
+        return instances
+    except Exception as e:
+        print("❌ Failed to fetch live instances:", e)
+        return []
+
+# Call once at startup to refresh
+fetch_live_invidious_instances()
+
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -113,9 +137,7 @@ async def find_videos_for_query(query):
     if cached:
         return [cached]
     loop = asyncio.get_event_loop()
-    # yt-dlp search in thread
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
-    # Invidious search async
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
@@ -207,7 +229,7 @@ def search_and_show_choices(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     markup = InlineKeyboardMarkup()
-    for v in videos[:5]:  # top 5 results
+    for v in videos[:5]:
         btn = InlineKeyboardButton(text=v['title'][:40], callback_data=f"download::{v['webpage_url']}")
         markup.add(btn)
     BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
