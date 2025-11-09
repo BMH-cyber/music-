@@ -8,7 +8,6 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import urllib.parse
-import unicodedata
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -18,7 +17,7 @@ from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
 
-# ===== CONFIG =====
+# ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
@@ -26,9 +25,11 @@ YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
 APP_URL = os.getenv("APP_URL")
 
+# ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 
+# ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
 CACHE_TTL_DAYS = 7
 
@@ -63,6 +64,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
+# ===== INVIDIOUS INSTANCES =====
 INVIDIOUS_INSTANCES = [
     "https://yewtu.be",
     "https://yewtu.cafe",
@@ -72,6 +74,7 @@ INVIDIOUS_INSTANCES = [
 ]
 
 async def refresh_invidious_instances():
+    # Update fresh instances every 30 minutes
     url = "https://api.invidious.io/instances.json"
     while True:
         try:
@@ -85,15 +88,7 @@ async def refresh_invidious_instances():
                 print(f"✅ Refreshed {len(instances)} Invidious instances")
         except Exception as e:
             print("❌ Failed to refresh instances:", e)
-        await asyncio.sleep(1800)
-
-# ===== NORMALIZE QUERY =====
-def normalize_query(text):
-    if not text:
-        return ""
-    text = unicodedata.normalize("NFC", text)
-    text = " ".join(text.split())
-    return text
+        await asyncio.sleep(1800)  # 30 minutes
 
 # ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
@@ -132,7 +127,6 @@ async def invidious_search(query, session, timeout=5):
     return []
 
 async def find_videos_for_query(query):
-    query = normalize_query(query)
     cached = cache_get(query)
     if cached:
         return [cached]
@@ -145,7 +139,9 @@ async def find_videos_for_query(query):
     for r in results:
         if isinstance(r, list):
             videos.extend(r)
+    # fallback: if nothing found, retry yt-dlp only
     if not videos:
+        print(f"⚠️ No result found in Invidious, trying yt-dlp fallback")
         yt_fallback = ytdlp_search_sync(query, True)
         videos.extend(yt_fallback)
     for v in videos:
@@ -206,10 +202,7 @@ def download_and_send(chat_id, video_url):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(
-        m,
-        "🎶 Welcome to Music4U — Type song name in English or Myanmar to download as MP3.\nမြန်မာစာနဲ့လည်း ရှာနိုင်ပါတယ်။"
-    )
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -217,8 +210,6 @@ def cmd_stop(m):
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
 # ===== SEARCH & INLINE BUTTONS =====
-from urllib.parse import quote, unquote
-
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
     chat_id = m.chat.id
@@ -226,7 +217,6 @@ def handle_message(m):
     if not text or text.startswith("/"):
         BOT.reply_to(m, "Use /start or type a song name.")
         return
-    text = normalize_query(text)
     BOT.send_chat_action(chat_id, "typing")
     THREAD_POOL.submit(search_and_show_choices, chat_id, text)
 
@@ -238,26 +228,19 @@ def search_and_show_choices(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     markup = InlineKeyboardMarkup()
-    row = []
     for v in videos[:5]:
-        safe_url = quote(v['webpage_url'], safe='')
-        btn = InlineKeyboardButton(
-            text=v['title'][:40],
-            callback_data=f"download::{safe_url}"
-        )
-        row.append(btn)
-    markup.row(*row)  # 🔹 5 buttons in one row
+        btn = InlineKeyboardButton(text=v['title'][:40], callback_data=f"download::{v['webpage_url']}")
+        markup.add(btn)
     BOT.send_message(chat_id, f"Select the song you want:", reply_markup=markup)
 
 @BOT.callback_query_handler(func=lambda call: call.data.startswith("download::"))
 def callback_download(call: CallbackQuery):
     chat_id = call.message.chat.id
-    encoded_url = call.data.split("::", 1)[1]
-    video_url = unquote(encoded_url)
+    video_url = call.data.split("::", 1)[1]
     BOT.answer_callback_query(call.id, "Downloading your song...")
     THREAD_POOL.submit(download_and_send, chat_id, video_url)
 
-# ===== FLASK SERVER =====
+# ===== FLASK SERVER FOR WEBHOOK =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
@@ -274,7 +257,7 @@ def webhook():
 # ===== MAIN =====
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.create_task(refresh_invidious_instances())
+    loop.create_task(refresh_invidious_instances())  # auto-refresh instances
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
