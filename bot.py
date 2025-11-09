@@ -4,12 +4,13 @@ from pathlib import Path
 import telebot, aiohttp, requests
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
-from flask import Flask
+from flask import Flask, request
 
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
+APP_URL = os.getenv("APP_URL")  # e.g. https://music-production-fecd.up.railway.app
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
@@ -205,21 +206,25 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (for Railway) =====
-def keep_alive():
-    app = Flask("music4u_keepalive")
-    @app.route("/")
-    def home():
-        return "✅ Music4U bot is alive"
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+# ===== FLASK WEBHOOK SETUP =====
+app = Flask("music4u_keepalive")
+
+@app.route("/")
+def home():
+    return "✅ Music4U bot is alive"
+
+WEBHOOK_PATH = f"/{TOKEN}"
+BOT.remove_webhook()
+BOT.set_webhook(url=APP_URL + WEBHOOK_PATH)
+
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    json_data = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_data)
+    BOT.process_new_updates([update])
+    return "OK"
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    keep_alive()
-    print("✅ Music4U bot running...")
-    while True:
-        try:
-            BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
-        except Exception as e:
-            print("⚠️ Polling error:", e)
-            time.sleep(5)
+    print("✅ Music4U bot running (Webhook mode)...")
+    app.run(host="0.0.0.0", port=PORT)
