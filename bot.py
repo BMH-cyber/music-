@@ -1,10 +1,19 @@
-import os, sys, json, time, asyncio, threading, tempfile, shutil
+import os
+import time
+import json
+import threading
+import tempfile
+import shutil
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import telebot, aiohttp, requests
-from dotenv import load_dotenv
+
+import telebot
+import aiohttp
+import requests
 from yt_dlp import YoutubeDL
 from flask import Flask
+from dotenv import load_dotenv
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -14,7 +23,7 @@ YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
 # ===== TELEBOT SETUP =====
-BOT = telebot.TeleBot(TOKEN, parse_mode=None)
+BOT = telebot.TeleBot(TOKEN)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
@@ -148,7 +157,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== PROCESSING QUEUE =====
+# ===== PROCESS QUEUE =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -205,21 +214,18 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== GLOBAL FLASK APP FOR GUNICORN =====
-app = Flask("music4u_keepalive")
+# ===== KEEP ALIVE SERVER =====
+flask_app = Flask("music4u_keepalive")
 
-@app.route("/")
+@flask_app.route("/")
 def home():
     return "✅ Music4U bot is alive"
 
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=PORT)
+
 # ===== MAIN =====
 if __name__ == "__main__":
-    # Start Flask server in separate thread
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+    threading.Thread(target=run_flask, daemon=True).start()
     print("✅ Music4U bot running...")
-    while True:
-        try:
-            BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
-        except Exception as e:
-            print("⚠️ Polling error:", e)
-            time.sleep(5)
+    BOT.infinity_polling(skip_pending=True, timeout=60)
