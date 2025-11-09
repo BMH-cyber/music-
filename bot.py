@@ -1,10 +1,10 @@
-import os, sys, json, time, asyncio, threading, tempfile, shutil
+import os, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
-from flask import Flask, request
+from flask import Flask
 
 # ===== LOAD CONFIG =====
 load_dotenv()
@@ -12,7 +12,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
-APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -149,28 +148,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== PROCESSING QUEUE (async optimized) =====
-async def process_song(chat_id, query):
-    video_info = await find_video_for_query(query)
-    if not video_info:
-        BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
-        return
-    BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
-    
-    loop = asyncio.get_event_loop()
-    mp3_file = await loop.run_in_executor(None, download_to_mp3, video_info["webpage_url"])
-    
-    if mp3_file:
-        size = os.path.getsize(mp3_file)
-        if size > MAX_TELEGRAM_FILE:
-            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
-        else:
-            with open(mp3_file, "rb") as f:
-                BOT.send_audio(chat_id, f, title=video_info["title"])
-        shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
-    else:
-        BOT.send_message(chat_id, f"❌ Download failed: {query}")
-
+# ===== PROCESSING QUEUE =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -178,11 +156,26 @@ def process_queue(chat_id):
     if ACTIVE.get(chat_id): return
     ACTIVE[chat_id] = True
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         while CHAT_QUEUE[chat_id]:
             query = CHAT_QUEUE[chat_id].pop(0)
-            loop.run_until_complete(process_song(chat_id, query))
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            video_info = loop.run_until_complete(find_video_for_query(query))
+            if not video_info:
+                BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
+                continue
+            BOT.send_message(chat_id, f"🎵 Found: {video_info['title']}\n⬇️ Downloading now...")
+            mp3_file = download_to_mp3(video_info["webpage_url"])
+            if mp3_file:
+                size = os.path.getsize(mp3_file)
+                if size > MAX_TELEGRAM_FILE:
+                    BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
+                else:
+                    with open(mp3_file, "rb") as f:
+                        BOT.send_audio(chat_id, f, title=video_info["title"])
+                shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
+            else:
+                BOT.send_message(chat_id, f"❌ Download failed: {query}")
     finally:
         ACTIVE.pop(chat_id, None)
 
@@ -212,17 +205,17 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE =====
+# ===== FLASK APP (for Gunicorn) =====
 app = Flask("music4u_keepalive")
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET"])
 def home():
     return "✅ Music4U bot is alive"
 
-def start_flask():
-    app.run(host="0.0.0.0", port=PORT)
-
-# ===== MAIN =====
-if __name__ == "__main__":
-    threading.Thread(target=start_flask, daemon=True).start()
-    print("✅ Music4U bot running...")
+# ===== TELEGRAM BOT POLLING THREAD =====
+def start_bot():
     BOT.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+
+# ===== START BOTH =====
+if __name__ == "__main__":
+    threading.Thread(target=start_bot, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT)
