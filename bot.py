@@ -1,4 +1,4 @@
-import os, time, json, asyncio, threading, tempfile, shutil
+import os, sys, json, time, asyncio, threading, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import telebot, aiohttp, requests
@@ -11,7 +11,7 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
+MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
@@ -182,7 +182,7 @@ def process_queue(chat_id):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as MP3.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -205,17 +205,17 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (for Railway) =====
-def keep_alive():
-    app = Flask("music4u_keepalive")
-    @app.route("/")
-    def home():
-        return "✅ Music4U bot is alive"
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
+# ===== GLOBAL FLASK APP FOR GUNICORN =====
+app = Flask("music4u_keepalive")
+
+@app.route("/")
+def home():
+    return "✅ Music4U bot is alive"
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    keep_alive()
+    # Start Flask server in separate thread
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
     print("✅ Music4U bot running...")
     while True:
         try:
