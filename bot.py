@@ -156,9 +156,10 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== FAST STREAMING + FALLBACK =====
+# ===== DOWNLOAD & SEND WITHOUT EXTRA MESSAGES =====
 def download_and_send(chat_id, video_url):
-    BOT.send_message(chat_id, "⚡ Downloading your song...")
+    # Minimal notice only
+    BOT.send_message(chat_id, "⚡ Downloading...")
 
     temp_buffer = BytesIO()
     opts = {
@@ -181,37 +182,32 @@ def download_and_send(chat_id, video_url):
                     temp_buffer.write(chunk)
                 size = temp_buffer.tell()
                 temp_buffer.seek(0)
-                if size > MAX_TELEGRAM_FILE:
-                    raise Exception(f"File too big ({round(size/1024/1024,2)} MB)")
-                BOT.send_audio(chat_id, temp_buffer, title=info.get("title"))
-                return
-            else:
-                raise Exception("No audio URL found")
-    except Exception as e:
-        BOT.send_message(chat_id, f"⚠️ Fast download failed: {str(e)}\n⏳ Using mp3 fallback...")
+                if size <= MAX_TELEGRAM_FILE:
+                    BOT.send_audio(chat_id, temp_buffer, title=info.get("title"))
+                    return
+    except:
+        # Ignore fast download errors silently
+        pass
 
+    # Fallback mp3 without extra messages
     mp3_file = download_to_mp3(video_url)
     if mp3_file:
         size = os.path.getsize(mp3_file)
-        if size > MAX_TELEGRAM_FILE:
-            BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
-        else:
+        if size <= MAX_TELEGRAM_FILE:
             with open(mp3_file, "rb") as f:
-                BOT.send_audio(chat_id, f, title=info.get("title"))
+                BOT.send_audio(chat_id, f)
         shutil.rmtree(os.path.dirname(mp3_file), ignore_errors=True)
     else:
         BOT.send_message(chat_id, "❌ Download failed.")
 
-# ===== SEARCH & SEND FULL SONG FAST =====
+# ===== SEARCH & SEND FAST SINGLE =====
 def search_and_send_fast(chat_id, query):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     videos = loop.run_until_complete(find_videos_for_query(query))
-
     if not videos:
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
-
     video = videos[0]  # top 1 only
     url = video.get("webpage_url")
     if url:
