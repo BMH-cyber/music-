@@ -1,27 +1,22 @@
-import os
-import time
-import json
-import shutil
-import tempfile
-import threading
-import asyncio
+import os, time, threading, tempfile, shutil, asyncio, json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import telebot
-import aiohttp
 from yt_dlp import YoutubeDL
 from flask import Flask
 from dotenv import load_dotenv
+import aiohttp, requests
 
-# ===== LOAD CONFIG =====
+# ===== CONFIG =====
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 30 * 1024 * 1024
+MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30 MB
 
-BOT = telebot.TeleBot(BOT_TOKEN)
+# ===== TELEBOT SETUP =====
+BOT = telebot.TeleBot(TOKEN)
 THREAD_POOL = ThreadPoolExecutor(max_workers=5)
 ACTIVE = {}
 CHAT_QUEUE = {}
@@ -66,7 +61,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== SEARCH HELPERS =====
+# ===== SEARCH =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
@@ -94,7 +89,7 @@ def ytdlp_search_sync(query, use_proxy=True):
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={query}&type=video&per_page=1"
+            url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
@@ -111,8 +106,7 @@ async def invidious_search(query, session, timeout=5):
 
 async def find_video_for_query(query):
     cached = cache_get(query)
-    if cached:
-        return cached
+    if cached: return cached
     loop = asyncio.get_event_loop()
     yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
     async with aiohttp.ClientSession() as session:
@@ -128,7 +122,7 @@ async def find_video_for_query(query):
         return direct_res
     return None
 
-# ===== DOWNLOAD AUDIO =====
+# ===== DOWNLOAD MP3 =====
 def download_to_mp3(video_url):
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
@@ -155,7 +149,7 @@ def download_to_mp3(video_url):
         return None
     return None
 
-# ===== PROCESS QUEUE =====
+# ===== QUEUE PROCESS =====
 def process_queue(chat_id):
     if chat_id not in CHAT_QUEUE or not CHAT_QUEUE[chat_id]:
         ACTIVE.pop(chat_id, None)
@@ -186,7 +180,7 @@ def process_queue(chat_id):
     finally:
         ACTIVE.pop(chat_id, None)
 
-# ===== BOT COMMANDS =====
+# ===== BOT HANDLERS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
     BOT.reply_to(m, "🎶 Welcome to Music4U — Type song name to download as MP3.")
@@ -212,9 +206,8 @@ def on_message(m):
     BOT.send_message(chat_id, f"🔍 Queued: {text}")
     THREAD_POOL.submit(process_queue, chat_id)
 
-# ===== KEEP ALIVE (for Railway) =====
+# ===== KEEP ALIVE =====
 app = Flask("music4u_keepalive")
-
 @app.route("/")
 def home():
     return "✅ Music4U bot is alive"
@@ -222,10 +215,8 @@ def home():
 def run_flask():
     app.run(host="0.0.0.0", port=PORT)
 
-def run_bot():
-    BOT.infinity_polling(skip_pending=True)
-
+# ===== MAIN =====
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     print("✅ Music4U bot running...")
-    run_bot()
+    BOT.infinity_polling(skip_pending=True)
