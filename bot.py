@@ -10,7 +10,7 @@ from flask import Flask, request
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
-APP_URL = os.getenv("APP_URL")  # e.g. https://music-production-fecd.up.railway.app
+APP_URL = os.getenv("APP_URL")
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
 MAX_TELEGRAM_FILE = 30 * 1024 * 1024
 
@@ -224,7 +224,7 @@ def telegram_webhook():
     BOT.process_new_updates([update])
     return "OK"
 
-# ===== MAIN =====
-if __name__ == "__main__":
-    print("✅ Music4U bot running (Webhook mode)...")
-    app.run(host="0.0.0.0", port=PORT)
+# ===== NOTE =====
+# Do NOT call app.run() here. 
+# Run with gunicorn in Railway:
+# gunicorn bot:app -b 0.0.0.0:$PORT
