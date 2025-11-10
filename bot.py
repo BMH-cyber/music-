@@ -100,11 +100,11 @@ def ytdlp_search_sync(query, use_proxy=True):
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
-        with YoutubeDL(opts) as ydl:
-            safe_query = urllib.parse.quote(query)
-            info = ydl.extract_info(f"ytsearch:{safe_query}", download=False)
-            entries = info.get("entries") or []
-            return entries[0:1]  # ✅ Top 1 result only
+        # ✅ Myanmar query percent-encode
+        safe_query = urllib.parse.quote(query, safe="")
+        info = YoutubeDL(opts).extract_info(f"ytsearch:{safe_query}", download=False)
+        entries = info.get("entries") or []
+        return entries[0:1]  # Top 1 result only
     except Exception as e:
         print("yt-dlp search error:", e)
         return []
@@ -112,7 +112,8 @@ def ytdlp_search_sync(query, use_proxy=True):
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={requests.utils.requote_uri(query)}&type=video&per_page=1"
+            # ✅ Myanmar query percent-encode for URL
+            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=1"
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
@@ -144,7 +145,7 @@ async def find_videos_for_query(query):
     for v in videos:
         if v.get("webpage_url"):
             cache_put(query, v)
-    return videos[:1]  # ✅ Only first result
+    return videos[:1]  # Only first video
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -199,7 +200,7 @@ def download_and_send(chat_id, video_url):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name to download as audio.")
+    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name (Myanmar supported) to download as audio.")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -208,9 +209,11 @@ def cmd_stop(m):
 
 # ===== SEARCH & SEND FIRST RESULT =====
 def search_and_send_first(chat_id, query):
+    print("Searching for:", query)  # ✅ debug
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     videos = loop.run_until_complete(find_videos_for_query(query))
+    print("Found videos:", videos)  # ✅ debug
     if not videos:
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
