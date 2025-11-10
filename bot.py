@@ -11,7 +11,6 @@ import urllib.parse
 
 import telebot
 import aiohttp
-import requests
 from yt_dlp import YoutubeDL
 from flask import Flask, request
 from dotenv import load_dotenv
@@ -21,7 +20,7 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 30 * 1024 * 1024  # 30MB
+MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 🔼 increased to 50MB
 APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
@@ -41,7 +40,7 @@ def load_cache():
     return {}
 
 def save_cache(c):
-    json.dump(c, open(CACHE_FILE, "w", encoding="utf-8"))
+    json.dump(c, open(CACHE_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 _cache = load_cache()
 
@@ -63,7 +62,7 @@ def cache_put(q, info):
     }
     save_cache(_cache)
 
-# ===== INVIDIOUS INSTANCES =====
+# ===== SMART SEARCH SYSTEM =====
 INVIDIOUS_INSTANCES = [
     "https://yewtu.be",
     "https://yewtu.cafe",
@@ -76,6 +75,7 @@ async def refresh_invidious_instances():
     url = "https://api.invidious.io/instances.json"
     while True:
         try:
+            import requests
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
             data = resp.json()
@@ -88,6 +88,18 @@ async def refresh_invidious_instances():
             print("❌ Failed to refresh instances:", e)
         await asyncio.sleep(1800)  # 30 minutes
 
+# ===== BEST MATCH FILTER =====
+def best_match(entries, query):
+    query_lower = query.lower()
+    best = None
+    for e in entries:
+        title = e.get("title", "").lower()
+        if any(word in title for word in query_lower.split()):
+            return e
+        if not best:
+            best = e
+    return best
+
 # ===== SEARCH HELPERS =====
 def ytdlp_search_sync(query, use_proxy=True):
     opts = {
@@ -95,16 +107,18 @@ def ytdlp_search_sync(query, use_proxy=True):
         "noplaylist": True,
         "no_warnings": True,
         "format": "bestaudio/best",
+        "encoding": "utf-8",
+        "source_address": "0.0.0.0",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
-        # ✅ Myanmar query percent-encode
-        safe_query = urllib.parse.quote(query, safe="")
-        info = YoutubeDL(opts).extract_info(f"ytsearch:{safe_query}", download=False)
+        # 🟢 Search top 5 results (Myanmar supported)
+        info = YoutubeDL(opts).extract_info(f"ytsearch5:{query}", download=False)
         entries = info.get("entries") or []
-        return entries[0:1]  # Top 1 result only
+        best = best_match(entries, query)
+        return [best] if best else []
     except Exception as e:
         print("yt-dlp search error:", e)
         return []
@@ -112,8 +126,7 @@ def ytdlp_search_sync(query, use_proxy=True):
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
-            # ✅ Myanmar query percent-encode for URL
-            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=1"
+            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=3"
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
@@ -145,7 +158,7 @@ async def find_videos_for_query(query):
     for v in videos:
         if v.get("webpage_url"):
             cache_put(query, v)
-    return videos[:1]  # Only first video
+    return videos[:1]
 
 # ===== DOWNLOAD AUDIO =====
 def check_ffmpeg():
@@ -168,7 +181,7 @@ def download_to_audio(video_url):
     }
     if check_ffmpeg():
         opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "128"}
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"}  # 🔼 HQ 320kbps
         ]
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
@@ -178,12 +191,13 @@ def download_to_audio(video_url):
         for f in os.listdir(tempdir):
             if f.lower().endswith((".mp3", ".m4a")):
                 return os.path.join(tempdir, f)
-    except:
+    except Exception as e:
+        print("Download error:", e)
         shutil.rmtree(tempdir, ignore_errors=True)
         return None
     return None
 
-def download_and_send(chat_id, video_url):
+def download_and_send(chat_id, video_url, title=None):
     BOT.send_chat_action(chat_id, "upload_audio")
     audio_file = download_to_audio(video_url)
     if audio_file:
@@ -191,8 +205,9 @@ def download_and_send(chat_id, video_url):
         if size > MAX_TELEGRAM_FILE:
             BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
         else:
+            caption = f"🎵 {title or 'Song'}"
             with open(audio_file, "rb") as f:
-                BOT.send_audio(chat_id, f)
+                BOT.send_audio(chat_id, f, caption=caption)
         shutil.rmtree(os.path.dirname(audio_file), ignore_errors=True)
     else:
         BOT.send_message(chat_id, "❌ Download failed.")
@@ -200,25 +215,28 @@ def download_and_send(chat_id, video_url):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 Welcome to Music4U — Type a song name (Myanmar supported) to download as audio.")
+    BOT.reply_to(m, "🎶 *Music4U Turbo Edition*\n\nမြန်မာ / English သီချင်းရှာပါ။\n\nType any song name ⬇️")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
     chat_id = m.chat.id
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
-# ===== SEARCH & SEND FIRST RESULT =====
+# ===== MAIN SEARCH LOGIC =====
 def search_and_send_first(chat_id, query):
-    print("Searching for:", query)  # ✅ debug
+    print("🔍 Searching:", query)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     videos = loop.run_until_complete(find_videos_for_query(query))
-    print("Found videos:", videos)  # ✅ debug
+    print("Found videos:", videos)
     if not videos:
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
-    video_url = videos[0]['webpage_url']
-    download_and_send(chat_id, video_url)
+    v = videos[0]
+    video_url = v['webpage_url']
+    title = v.get("title")
+    BOT.send_message(chat_id, f"✅ Found: {title}\n\nDownloading high-quality audio…")
+    download_and_send(chat_id, video_url, title)
 
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
@@ -230,12 +248,12 @@ def handle_message(m):
     BOT.send_chat_action(chat_id, "typing")
     THREAD_POOL.submit(search_and_send_first, chat_id, text)
 
-# ===== FLASK SERVER FOR WEBHOOK =====
+# ===== FLASK SERVER =====
 app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Music4U bot is alive"
+    return "✅ Music4U Turbo bot is alive"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -247,11 +265,11 @@ def webhook():
 # ===== MAIN =====
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.create_task(refresh_invidious_instances())  # auto-refresh instances
+    loop.create_task(refresh_invidious_instances())
     if APP_URL:
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
-    print("✅ Music4U bot running...")
+    print("✅ Music4U Turbo Edition running...")
     app.run(host="0.0.0.0", port=PORT)
