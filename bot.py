@@ -94,14 +94,14 @@ def best_match(entries, query):
     best = None
     for e in entries:
         title = e.get("title", "").lower()
-        if all(word in title for word in query_lower.split()):
+        if any(word in title for word in query_lower.split()):
             return e
         if not best:
             best = e
     return best
 
 # ===== SEARCH HELPERS =====
-def ytdlp_search_sync(query, use_proxy=True):
+def ytdlp_search_sync(query):
     opts = {
         "quiet": True,
         "noplaylist": True,
@@ -111,10 +111,10 @@ def ytdlp_search_sync(query, use_proxy=True):
         "source_address": "0.0.0.0",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
-    if use_proxy and YTDLP_PROXY:
+    if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
-        info = YoutubeDL(opts).extract_info(f"ytsearch10:{query}", download=False)
+        info = YoutubeDL(opts).extract_info(f"ytsearch5:{query}", download=False)
         entries = info.get("entries") or []
         best = best_match(entries, query)
         return [best] if best else []
@@ -122,11 +122,11 @@ def ytdlp_search_sync(query, use_proxy=True):
         print("yt-dlp search error:", e)
         return []
 
-async def invidious_search(query, session, timeout=5):
+async def invidious_search(query, session):
     for base in INVIDIOUS_INSTANCES:
         try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=5"
-            async with session.get(url, timeout=timeout) as resp:
+            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query)}&type=video&per_page=3"
+            async with session.get(url, timeout=5) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
                 return [{
@@ -143,16 +143,19 @@ async def find_videos_for_query(query):
     if cached:
         return [cached]
     loop = asyncio.get_event_loop()
-    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query)
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
-        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
+        try:
+            results = await asyncio.wait_for(asyncio.gather(yt_future, inv_future), timeout=10)
+        except asyncio.TimeoutError:
+            results = [[], []]
     videos = []
     for r in results:
         if isinstance(r, list):
             videos.extend(r)
     if not videos:
-        yt_fallback = ytdlp_search_sync(query, True)
+        yt_fallback = ytdlp_search_sync(query)
         videos.extend(yt_fallback)
     for v in videos:
         if v.get("webpage_url"):
@@ -204,8 +207,9 @@ def download_and_send(chat_id, video_url, title=None):
         if size > MAX_TELEGRAM_FILE:
             BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
         else:
+            caption = f"🎵 {title or 'Song'}"
             with open(audio_file, "rb") as f:
-                BOT.send_audio(chat_id, f, caption=title or "Song")
+                BOT.send_audio(chat_id, f, caption=caption)
         shutil.rmtree(os.path.dirname(audio_file), ignore_errors=True)
     else:
         BOT.send_message(chat_id, "❌ Download failed.")
@@ -229,7 +233,10 @@ def search_and_send_first(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     v = videos[0]
-    download_and_send(chat_id, v['webpage_url'], v.get("title"))
+    video_url = v['webpage_url']
+    title = v.get("title")
+    # 🔥 Skip "Found" message, direct download
+    download_and_send(chat_id, video_url, title)
 
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
@@ -263,4 +270,6 @@ if __name__ == "__main__":
         webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
+        print(f"✅ Webhook set to {webhook_url}")
+    print("✅ Music4U Turbo Edition running...")
     app.run(host="0.0.0.0", port=PORT)
