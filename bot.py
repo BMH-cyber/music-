@@ -20,7 +20,7 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 🔼 50MB max
+MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 50MB
 APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
@@ -86,7 +86,7 @@ async def refresh_invidious_instances():
                 print(f"✅ Refreshed {len(instances)} Invidious instances")
         except Exception as e:
             print("❌ Failed to refresh instances:", e)
-        await asyncio.sleep(1800)  # 30 min refresh
+        await asyncio.sleep(1800)  # 30 min
 
 # ===== BEST MATCH FILTER =====
 def best_match(entries, query):
@@ -94,7 +94,7 @@ def best_match(entries, query):
     best = None
     for e in entries:
         title = e.get("title", "").lower()
-        if any(word in title for word in query_lower.split()):
+        if all(word in title for word in query_lower.split()):
             return e
         if not best:
             best = e
@@ -107,14 +107,13 @@ def ytdlp_search_sync(query, use_proxy=True):
         "noplaylist": True,
         "no_warnings": True,
         "format": "bestaudio/best",
-        "encoding": "utf-8",
         "source_address": "0.0.0.0",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
-        info = YoutubeDL(opts).extract_info(f"ytsearch5:{query}", download=False)
+        info = YoutubeDL(opts).extract_info(f"ytsearch10:{query}", download=False)
         entries = info.get("entries") or []
         best = best_match(entries, query)
         return [best] if best else []
@@ -125,7 +124,7 @@ def ytdlp_search_sync(query, use_proxy=True):
 async def invidious_search(query, session, timeout=5):
     for base in INVIDIOUS_INSTANCES:
         try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=3"
+            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=5"
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status != 200: continue
                 data = await resp.json()
@@ -160,13 +159,6 @@ async def find_videos_for_query(query):
     return videos[:1]
 
 # ===== DOWNLOAD AUDIO =====
-def check_ffmpeg():
-    try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except:
-        return False
-
 def download_to_audio(video_url):
     tempdir = tempfile.mkdtemp(prefix="music4u_")
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
@@ -175,20 +167,15 @@ def download_to_audio(video_url):
         "outtmpl": outtmpl,
         "noplaylist": True,
         "quiet": True,
-        "no_warnings": True,
-        "postprocessors": []
+        "no_warnings": True
     }
-    if check_ffmpeg():
-        opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}  # HQ 192kbps
-        ]
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            ydl.extract_info(video_url, download=True)
+            info = ydl.extract_info(video_url, download=True)
         for f in os.listdir(tempdir):
-            if f.lower().endswith((".mp3", ".m4a")):
+            if f.lower().endswith((".mp3", ".m4a", ".webm")):
                 return os.path.join(tempdir, f)
     except Exception as e:
         print("Download error:", e)
@@ -204,9 +191,8 @@ def download_and_send(chat_id, video_url, title=None):
         if size > MAX_TELEGRAM_FILE:
             BOT.send_message(chat_id, f"⚠️ File too large ({round(size/1024/1024,2)} MB)")
         else:
-            caption = f"🎵 {title or 'Song'}"
             with open(audio_file, "rb") as f:
-                BOT.send_audio(chat_id, f, caption=caption)
+                BOT.send_audio(chat_id, f, caption=f"🎵 {title or 'Song'}")
         shutil.rmtree(os.path.dirname(audio_file), ignore_errors=True)
     else:
         BOT.send_message(chat_id, "❌ Download failed.")
@@ -214,7 +200,7 @@ def download_and_send(chat_id, video_url, title=None):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 *Music4U Turbo Edition*\n\nမြန်မာ / English သီချင်းရှာပါ။\n\nType any song name ⬇️")
+    BOT.reply_to(m, "🎶 *Music4U Rapid Mode*\n\nမြန်မာ / English သီချင်းရှာပါ။\nType song name ⬇️")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -230,9 +216,7 @@ def search_and_send_first(chat_id, query):
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
     v = videos[0]
-    video_url = v['webpage_url']
-    title = v.get("title")
-    download_and_send(chat_id, video_url, title)  # ⚡ Directly send audio without "Found" message
+    download_and_send(chat_id, v['webpage_url'], v.get("title"))
 
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
@@ -249,7 +233,7 @@ app = Flask("music4u_keepalive")
 
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Music4U Turbo bot is alive"
+    return "✅ Music4U Rapid Mode bot alive"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -267,5 +251,5 @@ if __name__ == "__main__":
         BOT.remove_webhook()
         BOT.set_webhook(url=webhook_url)
         print(f"✅ Webhook set to {webhook_url}")
-    print("✅ Music4U Turbo Edition running...")
+    print("✅ Music4U Rapid Mode running...")
     app.run(host="0.0.0.0", port=PORT)
