@@ -18,12 +18,9 @@ from dotenv import load_dotenv
 # ===== LOAD CONFIG =====
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN is missing!")
-TOKEN = TOKEN.strip()
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 50MB
+MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 🔼 increased to 50MB
 APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
@@ -104,7 +101,7 @@ def best_match(entries, query):
     return best
 
 # ===== SEARCH HELPERS =====
-def ytdlp_search_sync(query, use_proxy=True, max_results=10):
+def ytdlp_search_sync(query, use_proxy=True):
     opts = {
         "quiet": True,
         "noplaylist": True,
@@ -117,7 +114,8 @@ def ytdlp_search_sync(query, use_proxy=True, max_results=10):
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
-        info = YoutubeDL(opts).extract_info(f"ytsearch{max_results}:{query}", download=False)
+        # 🟢 Search top 5 results (Myanmar supported)
+        info = YoutubeDL(opts).extract_info(f"ytsearch5:{query}", download=False)
         entries = info.get("entries") or []
         best = best_match(entries, query)
         return [best] if best else []
@@ -141,32 +139,25 @@ async def invidious_search(query, session, timeout=5):
             continue
     return []
 
-# ===== FIND VIDEOS WITH TOP 10 + FALLBACK =====
-async def find_videos_for_query(query, max_results=10):
+async def find_videos_for_query(query):
     cached = cache_get(query)
     if cached:
         return [cached]
-
     loop = asyncio.get_event_loop()
-    yt_future = loop.run_in_executor(None, lambda: ytdlp_search_sync(query, True, max_results))
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
     async with aiohttp.ClientSession() as session:
         inv_future = invidious_search(query, session)
         results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
-
     videos = []
     for r in results:
         if isinstance(r, list):
             videos.extend(r)
-
-    # fallback if empty
     if not videos:
-        yt_fallback = ytdlp_search_sync(query, True, max_results)
+        yt_fallback = ytdlp_search_sync(query, True)
         videos.extend(yt_fallback)
-
     for v in videos:
         if v.get("webpage_url"):
             cache_put(query, v)
-
     return videos[:1]
 
 # ===== DOWNLOAD AUDIO =====
@@ -190,7 +181,7 @@ def download_to_audio(video_url):
     }
     if check_ffmpeg():
         opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}  # 192kbps
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"}  # 🔼 HQ 320kbps
         ]
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
@@ -224,7 +215,7 @@ def download_and_send(chat_id, video_url, title=None):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 *Music4U Turbo Edition*\n\nမြန်မာ / English သီချင်းရှာပါ။\nType any song name ⬇️")
+    BOT.reply_to(m, "🎶 *Music4U Turbo Edition*\n\nမြန်မာ / English သီချင်းရှာပါ။\n\nType any song name ⬇️")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
@@ -244,6 +235,7 @@ def search_and_send_first(chat_id, query):
     v = videos[0]
     video_url = v['webpage_url']
     title = v.get("title")
+    BOT.send_message(chat_id, f"✅ Found: {title}\n\nDownloading high-quality audio…")
     download_and_send(chat_id, video_url, title)
 
 @BOT.message_handler(func=lambda m: True)
