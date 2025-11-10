@@ -20,7 +20,7 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
 YTDLP_PROXY = os.getenv("YTDLP_PROXY", "")
-MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 50MB
+MAX_TELEGRAM_FILE = 50 * 1024 * 1024  # 🔼 50MB max
 APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
@@ -86,7 +86,7 @@ async def refresh_invidious_instances():
                 print(f"✅ Refreshed {len(instances)} Invidious instances")
         except Exception as e:
             print("❌ Failed to refresh instances:", e)
-        await asyncio.sleep(1800)  # 30 min
+        await asyncio.sleep(1800)  # 30 min refresh
 
 # ===== BEST MATCH FILTER =====
 def best_match(entries, query):
@@ -114,8 +114,7 @@ def ytdlp_search_sync(query, use_proxy=True):
     if use_proxy and YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
-        # 🔹 Top 10 results
-        info = YoutubeDL(opts).extract_info(f"ytsearch10:{query}", download=False)
+        info = YoutubeDL(opts).extract_info(f"ytsearch5:{query}", download=False)
         entries = info.get("entries") or []
         best = best_match(entries, query)
         return [best] if best else []
@@ -181,7 +180,7 @@ def download_to_audio(video_url):
     }
     if check_ffmpeg():
         opts["postprocessors"] = [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"}
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}  # HQ 192kbps
         ]
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
@@ -222,9 +221,8 @@ def cmd_stop(m):
     chat_id = m.chat.id
     BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
 
-# ===== MAIN SEARCH LOGIC (DIRECT DOWNLOAD) =====
+# ===== MAIN SEARCH LOGIC =====
 def search_and_send_first(chat_id, query):
-    print("🔍 Searching:", query)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     videos = loop.run_until_complete(find_videos_for_query(query))
@@ -234,8 +232,7 @@ def search_and_send_first(chat_id, query):
     v = videos[0]
     video_url = v['webpage_url']
     title = v.get("title")
-    # Direct mp3 download, no "Found" message
-    download_and_send(chat_id, video_url, title)
+    download_and_send(chat_id, video_url, title)  # ⚡ Directly send audio without "Found" message
 
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
