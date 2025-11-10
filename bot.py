@@ -25,7 +25,7 @@ APP_URL = os.getenv("APP_URL")
 
 # ===== TELEBOT SETUP =====
 BOT = telebot.TeleBot(TOKEN, parse_mode=None)
-THREAD_POOL = ThreadPoolExecutor(max_workers=5)
+THREAD_POOL = ThreadPoolExecutor(max_workers=10)  # Increased for faster search
 
 # ===== CACHE SYSTEM =====
 CACHE_FILE = Path("music4u_cache.json")
@@ -86,31 +86,27 @@ async def refresh_invidious_instances():
                 print(f"✅ Refreshed {len(instances)} Invidious instances")
         except Exception as e:
             print("❌ Failed to refresh instances:", e)
-        await asyncio.sleep(1800)  # 30 min
+        await asyncio.sleep(1800)
 
 # ===== BEST MATCH FILTER =====
 def best_match(entries, query):
     query_lower = query.lower()
-    best = None
     for e in entries:
         title = e.get("title", "").lower()
         if all(word in title for word in query_lower.split()):
             return e
-        if not best:
-            best = e
-    return best
+    return entries[0] if entries else None
 
 # ===== SEARCH HELPERS =====
-def ytdlp_search_sync(query, use_proxy=True):
+def ytdlp_search_sync(query):
     opts = {
         "quiet": True,
         "noplaylist": True,
-        "no_warnings": True,
         "format": "bestaudio/best",
         "source_address": "0.0.0.0",
         "http_headers": {"User-Agent": "Mozilla/5.0"}
     }
-    if use_proxy and YTDLP_PROXY:
+    if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         info = YoutubeDL(opts).extract_info(f"ytsearch10:{query}", download=False)
@@ -121,66 +117,73 @@ def ytdlp_search_sync(query, use_proxy=True):
         print("yt-dlp search error:", e)
         return []
 
-async def invidious_search(query, session, timeout=5):
-    for base in INVIDIOUS_INSTANCES:
-        try:
-            url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query, safe='')}&type=video&per_page=5"
-            async with session.get(url, timeout=timeout) as resp:
-                if resp.status != 200: continue
-                data = await resp.json()
-                return [{
-                    "title": v.get("title"),
-                    "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
-                    "id": v.get("videoId")
-                } for v in data]
-        except:
-            continue
+async def invidious_search(query):
+    async with aiohttp.ClientSession() as session:
+        for base in INVIDIOUS_INSTANCES:
+            try:
+                url = f"{base.rstrip('/')}/api/v1/search?q={urllib.parse.quote(query)}&type=video&per_page=5"
+                async with session.get(url, timeout=5) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    return [{
+                        "title": v.get("title"),
+                        "webpage_url": f"https://www.youtube.com/watch?v={v.get('videoId')}",
+                        "id": v.get("videoId")
+                    } for v in data]
+            except:
+                continue
     return []
 
-async def find_videos_for_query(query):
+async def find_videos(query):
     cached = cache_get(query)
     if cached:
         return [cached]
     loop = asyncio.get_event_loop()
-    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query, True)
-    async with aiohttp.ClientSession() as session:
-        inv_future = invidious_search(query, session)
-        results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
+    yt_future = loop.run_in_executor(None, ytdlp_search_sync, query)
+    inv_future = invidious_search(query)
+    results = await asyncio.gather(yt_future, inv_future, return_exceptions=True)
     videos = []
     for r in results:
         if isinstance(r, list):
             videos.extend(r)
     if not videos:
-        yt_fallback = ytdlp_search_sync(query, True)
-        videos.extend(yt_fallback)
+        videos.extend(ytdlp_search_sync(query))
     for v in videos:
         if v.get("webpage_url"):
             cache_put(query, v)
     return videos[:1]
 
 # ===== DOWNLOAD AUDIO =====
+def check_ffmpeg():
+    try:
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except:
+        return False
+
 def download_to_audio(video_url):
-    tempdir = tempfile.mkdtemp(prefix="music4u_")
+    tempdir = tempfile.mkdtemp()
     outtmpl = os.path.join(tempdir, "%(title)s.%(ext)s")
     opts = {
         "format": "bestaudio/best",
         "outtmpl": outtmpl,
         "noplaylist": True,
         "quiet": True,
-        "no_warnings": True
+        "postprocessors": []
     }
+    if check_ffmpeg():
+        opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     try:
         with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
+            ydl.extract_info(video_url, download=True)
         for f in os.listdir(tempdir):
-            if f.lower().endswith((".mp3", ".m4a", ".webm")):
+            if f.lower().endswith(".mp3"):
                 return os.path.join(tempdir, f)
     except Exception as e:
         print("Download error:", e)
-        shutil.rmtree(tempdir, ignore_errors=True)
-        return None
     return None
 
 def download_and_send(chat_id, video_url, title=None):
@@ -200,18 +203,17 @@ def download_and_send(chat_id, video_url, title=None):
 # ===== BOT COMMANDS =====
 @BOT.message_handler(commands=["start", "help"])
 def cmd_start(m):
-    BOT.reply_to(m, "🎶 *Music4U Rapid Mode*\n\nမြန်မာ / English သီချင်းရှာပါ။\nType song name ⬇️")
+    BOT.reply_to(m, "🎶 *Music4U Rapid Mode*\n\nမြန်မာ / English သီချင်းရှာပါ\nType song name ⬇️")
 
 @BOT.message_handler(commands=["stop"])
 def cmd_stop(m):
-    chat_id = m.chat.id
-    BOT.send_message(chat_id, "🛑 Queue cleared / stopped.")
+    BOT.send_message(m.chat.id, "🛑 Queue cleared / stopped.")
 
 # ===== MAIN SEARCH LOGIC =====
-def search_and_send_first(chat_id, query):
+def search_and_send(chat_id, query):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    videos = loop.run_until_complete(find_videos_for_query(query))
+    videos = loop.run_until_complete(find_videos(query))
     if not videos:
         BOT.send_message(chat_id, f"🚫 Couldn't find: {query}")
         return
@@ -220,25 +222,23 @@ def search_and_send_first(chat_id, query):
 
 @BOT.message_handler(func=lambda m: True)
 def handle_message(m):
-    chat_id = m.chat.id
     text = (m.text or "").strip()
     if not text or text.startswith("/"):
         BOT.reply_to(m, "Use /start or type a song name.")
         return
-    BOT.send_chat_action(chat_id, "typing")
-    THREAD_POOL.submit(search_and_send_first, chat_id, text)
+    BOT.send_chat_action(m.chat.id, "typing")
+    THREAD_POOL.submit(search_and_send, m.chat.id, text)
 
 # ===== FLASK SERVER =====
-app = Flask("music4u_keepalive")
+app = Flask("music4u")
 
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Music4U Rapid Mode bot alive"
+    return "✅ Music4U Rapid Mode alive"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
+    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
     BOT.process_new_updates([update])
     return "ok", 200
 
@@ -247,9 +247,7 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(refresh_invidious_instances())
     if APP_URL:
-        webhook_url = f"{APP_URL}/{TOKEN}"
         BOT.remove_webhook()
-        BOT.set_webhook(url=webhook_url)
-        print(f"✅ Webhook set to {webhook_url}")
+        BOT.set_webhook(url=f"{APP_URL}/{TOKEN}")
     print("✅ Music4U Rapid Mode running...")
     app.run(host="0.0.0.0", port=PORT)
