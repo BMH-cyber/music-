@@ -1,30 +1,14 @@
 import os
-import sys
 import telebot
-import threading
-from dotenv import load_dotenv
-from flask import Flask
-import logging
-
-# ===== Logging =====
-logging.basicConfig(level=logging.INFO)
+from flask import Flask, request
 
 # ===== Load Config =====
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    logging.error("❌ BOT_TOKEN not found in .env file!")
-    sys.exit()
+    raise ValueError("❌ BOT_TOKEN not found in environment variables!")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-
-# ===== Flask App =====
 app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "✅ Bot is running successfully on Railway!"
 
 # ===== Handlers =====
 def create_markup_start_help():
@@ -89,14 +73,24 @@ def handle_about(message):
         disable_web_page_preview=True
     )
 
-# ===== Bot Polling in Background =====
-def run_bot():
-    logging.info("✅ Bot polling started...")
-    bot.infinity_polling(timeout=30, long_polling_timeout=30)
+# ===== Webhook Route =====
+@app.route(f"/{BOT_TOKEN}", methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "!", 200
 
-# ===== Main =====
+# ===== Set Webhook Route =====
+@app.route("/")
+def index():
+    return "✅ Bot is running successfully on Railway!"
+
+# ===== Run Flask =====
 if __name__ == "__main__":
-    threading.Thread(target=run_bot, daemon=True).start()
-    port = int(os.environ.get("PORT", 8080))
-    logging.info(f"🚀 Flask web server running on port {port} ...")
-    app.run(host="0.0.0.0", port=port)
+    PORT = int(os.environ.get("PORT", 8080))
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g. https://your-app.up.railway.app/<BOT_TOKEN>
+    if WEBHOOK_URL:
+        bot.remove_webhook()
+        bot.set_webhook(url=WEBHOOK_URL)
+    app.run(host="0.0.0.0", port=PORT)
