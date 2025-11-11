@@ -5,13 +5,13 @@ from flask import Flask, request
 # ===== Load Config =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN not found in environment variables!")
+    raise ValueError("❌ BOT_TOKEN environment variable is missing!")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ===== Handlers =====
-def create_markup_start_help():
+# ===== Button markup =====
+def get_common_markup():
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
@@ -23,9 +23,10 @@ def create_markup_start_help():
     )
     return markup
 
+# ===== Handlers =====
 @bot.message_handler(commands=['start'])
-def handle_start(message):
-    markup = create_markup_start_help()
+def start_command(message):
+    markup = get_common_markup()
     markup.add(
         telebot.types.InlineKeyboardButton("🌐 Join All Groups", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
     )
@@ -43,23 +44,23 @@ def handle_start(message):
     )
 
 @bot.message_handler(commands=['help'])
-def handle_help(message):
-    markup = create_markup_start_help()
+def help_command(message):
+    markup = get_common_markup()
     bot.send_message(
         message.chat.id,
         """🆘 <b>အသုံးပြုပုံ</b>
 
-/start - ညီကိုတို့အတွက် အပန်းဖြေရာ စတင်ရန်  
-/help - အသုံးပြုပုံလမ်းညွှန် ကြည့်ရန်  
+/start - အပန်းဖြေရာ စတင်ရန်  
+/help - အသုံးပြုပုံကြည့်ရန်  
 /about - ကြော်ငြာအကြောင်းဆက်သွယ်ရန်  
 
-မေးချင်တာရှိရင် Main Chat မှာ မေးလို့ရပါတယ် 💬""",
+မေးချင်တာရှိရင် Main Chat မှာမေးလို့ရပါတယ် 💬""",
         reply_markup=markup,
         disable_web_page_preview=True
     )
 
 @bot.message_handler(commands=['about'])
-def handle_about(message):
+def about_command(message):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton("📩 Contact Now", url="https://t.me/twentyfour7ithinkingaboutyou")
@@ -73,7 +74,7 @@ def handle_about(message):
         disable_web_page_preview=True
     )
 
-# ===== Webhook Route =====
+# ===== Webhook route =====
 @app.route(f"/{BOT_TOKEN}", methods=['POST'])
 def webhook():
     json_str = request.get_data().decode('utf-8')
@@ -81,16 +82,18 @@ def webhook():
     bot.process_new_updates([update])
     return "!", 200
 
-# ===== Set Webhook Route =====
+# ===== Index =====
 @app.route("/")
 def index():
     return "✅ Bot is running successfully on Railway!"
 
-# ===== Run Flask =====
+# ===== Run =====
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 8080))
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g. https://your-app.up.railway.app/<BOT_TOKEN>
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g., https://your-app.up.railway.app/<BOT_TOKEN>
+    
     if WEBHOOK_URL:
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
+
     app.run(host="0.0.0.0", port=PORT)
