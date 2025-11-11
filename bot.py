@@ -1,18 +1,26 @@
 import os
 import telebot
 from flask import Flask, request
+import requests
 
-# ===== Config =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN environment variable is missing!")
-
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+
+if not BOT_TOKEN or not WEBHOOK_URL:
+    raise ValueError("❌ BOT_TOKEN or WEBHOOK_URL missing in environment variables!")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ===== Common Buttons =====
+def reset_webhook():
+    try:
+        del_resp = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+        print(f"DeleteWebhook: {del_resp.json()}")
+        set_resp = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}")
+        print(f"SetWebhook: {set_resp.json()}")
+    except Exception as e:
+        print(f"❌ Webhook reset failed: {e}")
+
 def get_common_markup():
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
@@ -25,7 +33,6 @@ def get_common_markup():
     )
     return markup
 
-# ===== Command Handlers =====
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     markup = get_common_markup()
@@ -36,7 +43,7 @@ def handle_start(message):
         message.chat.id,
         """ညီကိုတို့အတွက် အပန်းဖြေရာ 🥵
 
-တစ်ခုချင်းဝင်ချင်တဲ့ညီကိုတွေအတွက်ကတော့အောက်ကခလုတ်တွေပါ ❤️
+တစ်ခုချင်းဝင်ချင်တဲ့ညီကိုတွေအတွက်အောက်ကခလုတ်တွေပါ ❤️
 
 တစ်ခါတည်းဂရုအကုန်ဝင်ချင်တဲ့ညီကိုတွေက‌တော့ “🌐 Join All Groups” ကိုနှိပ်ပါ 👇
 
@@ -74,28 +81,22 @@ def handle_about(message):
         disable_web_page_preview=True
     )
 
-# ===== Webhook Route =====
 @app.route(f"/{BOT_TOKEN}", methods=['POST'])
 def webhook():
     try:
         json_str = request.get_data().decode('utf-8')
-        if not json_str:
-            return "Empty request", 400
-        update = telebot.types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-    except Exception as e:
-        print(f"❌ Webhook processing error: {e}")
+        if json_str:
+            update = telebot.types.Update.de_json(json_str)
+            bot.process_new_updates([update])
+    except Exception:
+        pass
     return "!", 200
 
-# ===== Index =====
 @app.route("/")
 def index():
     return "✅ Bot is running successfully!"
 
-# ===== Start =====
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 8080))
-    if WEBHOOK_URL:
-        bot.remove_webhook()
-        bot.set_webhook(url=WEBHOOK_URL)
+    reset_webhook()
     app.run(host="0.0.0.0", port=PORT)
