@@ -2,15 +2,17 @@ import os
 import telebot
 from flask import Flask, request
 
-# ===== Load Config =====
+# ===== Config =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN environment variable is missing!")
 
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g., https://your-app.up.railway.app/<BOT_TOKEN>
+
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ===== Button markup =====
+# ===== Markup =====
 def get_common_markup():
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
@@ -25,7 +27,7 @@ def get_common_markup():
 
 # ===== Handlers =====
 @bot.message_handler(commands=['start'])
-def start_command(message):
+def handle_start(message):
     markup = get_common_markup()
     markup.add(
         telebot.types.InlineKeyboardButton("🌐 Join All Groups", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
@@ -44,7 +46,7 @@ def start_command(message):
     )
 
 @bot.message_handler(commands=['help'])
-def help_command(message):
+def handle_help(message):
     markup = get_common_markup()
     bot.send_message(
         message.chat.id,
@@ -60,7 +62,7 @@ def help_command(message):
     )
 
 @bot.message_handler(commands=['about'])
-def about_command(message):
+def handle_about(message):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton("📩 Contact Now", url="https://t.me/twentyfour7ithinkingaboutyou")
@@ -74,7 +76,7 @@ def about_command(message):
         disable_web_page_preview=True
     )
 
-# ===== Webhook route =====
+# ===== Webhook Route =====
 @app.route(f"/{BOT_TOKEN}", methods=['POST'])
 def webhook():
     json_str = request.get_data().decode('utf-8')
@@ -87,13 +89,10 @@ def webhook():
 def index():
     return "✅ Bot is running successfully on Railway!"
 
-# ===== Run =====
+# ===== Start =====
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 8080))
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g., https://your-app.up.railway.app/<BOT_TOKEN>
-    
     if WEBHOOK_URL:
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
-
     app.run(host="0.0.0.0", port=PORT)
