@@ -79,9 +79,14 @@ def handle_about(message):
 # ===== Webhook Route =====
 @app.route(f"/{BOT_TOKEN}", methods=['POST'])
 def webhook():
-    json_str = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
+    try:
+        json_str = request.get_data().decode('utf-8')
+        if not json_str:
+            return "Empty request", 400
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"❌ Webhook processing error: {e}")
     return "!", 200
 
 # ===== Index =====
