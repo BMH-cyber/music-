@@ -1,14 +1,12 @@
-# ===== Install dependencies =====
-pip install pyTelegramBotAPI==4.12.0 Flask==2.3.6 requests==2.31.0 python-dotenv==1.0.1
-
 # ===== Create bot.py =====
 cat <<'EOL' > bot.py
 import os
 import telebot
 from flask import Flask, request
 import requests
+import yt_dlp
+import traceback
 
-# ===== Load environment variables =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
@@ -19,15 +17,15 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 # ===== Webhook setup =====
-def reset_webhook():
+def setup_webhook():
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}")
-    except Exception:
-        pass
+    except Exception as e:
+        print("Webhook setup failed:", e)
 
-# ===== Common button markup =====
-def get_common_markup():
+# ===== Common Buttons =====
+def common_markup():
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
@@ -41,34 +39,58 @@ def get_common_markup():
 
 # ===== Handlers =====
 @bot.message_handler(commands=['start'])
-def handle_start(message):
-    markup = get_common_markup()
+def start_handler(message):
+    markup = common_markup()
     markup.add(telebot.types.InlineKeyboardButton("🌐 Join All Groups", url="https://t.me/addlist/T_JawSxSbmA3ZTRl"))
     bot.send_message(
         message.chat.id,
-        "ညီကိုတို့အတွက် အပန်းဖြေရာ 🥵\n\nတစ်ခုချင်းဝင်ချင်တဲ့ညီကိုတွေအတွက်အောက်ကခလုတ်တွေပါ ❤️\n\nတစ်ခါတည်းဂရုအကုန်ဝင်ချင်တဲ့ညီကိုတွေက‌တော့ “🌐 Join All Groups” ကိုနှိပ်ပါ 👇\n\nသာယာသောနေ့လေးဖြစ်ပါစေညိုကီတို့ 😘",
+        "ညီကိုတို့အတွက် အပန်းဖြေရာ 🥵\n\nအောက်ကခလုတ်တွေကို နှိပ်ပြီး ဝင်နိုင်ပါတယ် ❤️",
         reply_markup=markup,
         disable_web_page_preview=True
     )
 
 @bot.message_handler(commands=['help'])
-def handle_help(message):
-    markup = get_common_markup()
+def help_handler(message):
+    markup = common_markup()
     bot.send_message(
         message.chat.id,
-        "/start - စတင်ရန်\n/help - အသုံးပြုပုံကြည့်ရန်\n/about - ကြော်ငြာအကြောင်းဆက်သွယ်ရန်",
+        "/start - စတင်ရန်\n/help - အသုံးပြုပုံ\n/about - ကြော်ငြာဆက်သွယ်ရန်\n/download <YouTube URL> - MP3 Download",
         reply_markup=markup
     )
 
 @bot.message_handler(commands=['about'])
-def handle_about(message):
+def about_handler(message):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton("📩 Contact Now", url="https://t.me/twentyfour7ithinkingaboutyou"))
     bot.send_message(
         message.chat.id,
-        "📢 ကြော်ငြာအကြောင်း ဆက်သွယ်ရန်\n\n👇 @twentyfour7ithinkingaboutyou",
+        "📢 ကြော်ငြာအကြောင်း ဆက်သွယ်ရန်\n👇 @twentyfour7ithinkingaboutyou",
         reply_markup=markup
     )
+
+# ===== Download Command =====
+@bot.message_handler(commands=['download'])
+def download_handler(message):
+    try:
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            bot.reply_to(message, "❌ Please provide YouTube URL.\nUsage: /download <URL>")
+            return
+        url = args[1]
+        bot.reply_to(message, "⬇️ Downloading MP3...")
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': '/tmp/%(title)s.%(ext)s',
+            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec':'mp3','preferredquality':'192'}],
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info).replace(".webm", ".mp3").replace(".m4a", ".mp3")
+        with open(file_path, 'rb') as f:
+            bot.send_audio(message.chat.id, f, title=info.get('title'))
+    except Exception as e:
+        traceback.print_exc()
+        bot.reply_to(message, f"❌ Error: {e}")
 
 # ===== Webhook route =====
 @app.route(f"/{BOT_TOKEN}", methods=['POST'])
@@ -85,13 +107,13 @@ def webhook():
 # ===== Health check =====
 @app.route("/")
 def index():
-    return "✅ Bot is running successfully!"
+    return "✅ Bot is running!"
 
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 8080))
-    reset_webhook()
+    setup_webhook()
     app.run(host="0.0.0.0", port=PORT)
 EOL
 
-# ===== Run bot with gunicorn =====
+# ===== Run with Gunicorn =====
 gunicorn bot:app -b 0.0.0.0:$PORT
