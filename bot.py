@@ -12,7 +12,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ===== Markup =====
+# ===== Common Buttons =====
 def get_common_markup():
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
@@ -25,7 +25,7 @@ def get_common_markup():
     )
     return markup
 
-# ===== Handlers =====
+# ===== Command Handlers =====
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     markup = get_common_markup()
