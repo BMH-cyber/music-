@@ -5,14 +5,6 @@ import threading
 import time
 from dotenv import load_dotenv
 from flask import Flask
-import subprocess
-
-# ===== Kill previous Telebot processes (local only) =====
-try:
-    subprocess.run(["pkill", "-f", "telebot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("🧹 Old telebot instances killed successfully.")
-except Exception as e:
-    print(f"⚠️ Could not kill old processes: {e}")
 
 # ===== Load Config =====
 load_dotenv()
