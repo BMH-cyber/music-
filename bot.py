@@ -20,6 +20,17 @@ def home():
     return "✅ Telegram Bot is Running on Railway!"
 
 # ============================
+# 🔹 Function to send second message
+# ============================
+def send_second_message(chat_id):
+    text2 = "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်"
+    markup2 = InlineKeyboardMarkup()
+    markup2.add(
+        InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
+    )
+    bot.send_message(chat_id, text2, reply_markup=markup2)
+
+# ============================
 # 🔹 Handle /start Command
 # ============================
 @bot.message_handler(commands=['start'])
@@ -43,15 +54,11 @@ def send_welcome(message):
     markup1.add(
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
     )
+
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # 🔹 ဒုတိယ Message (ကြေငြာအတွက် ဆက်သွယ်ရန်)
-    text2 = "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်"
-    markup2 = InlineKeyboardMarkup()
-    markup2.add(
-        InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
-    )
-    bot.send_message(chat_id, text2, reply_markup=markup2)
+    # 🔹 Thread နဲ့ ဒုတိယ message ပို့ခြင်း
+    threading.Thread(target=send_second_message, args=(chat_id,)).start()
 
 # ============================
 # 🔹 Background Bot Polling
