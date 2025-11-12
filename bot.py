@@ -26,26 +26,32 @@ def home():
 def send_welcome(message):
     chat_id = message.chat.id
 
-    text = (
+    # 🔹 ပထမ Message (သာယာသောနေ့ + ကျေးဇူး)
+    text1 = (
         "🌞 သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰\n"
         "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီတိုင်းကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်"
     )
-
-    # Buttons (Bottom Click)
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
+    markup1 = InlineKeyboardMarkup(row_width=2)
+    markup1.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
-        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl")  # ✅ Name changed
+        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl")
     )
-    markup.add(
+    markup1.add(
         InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
         InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
     )
-    markup.add(
+    markup1.add(
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
     )
+    bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    bot.send_message(chat_id, text, reply_markup=markup)
+    # 🔹 ဒုတိယ Message (ကြေငြာအတွက် ဆက်သွယ်ရန်)
+    text2 = "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်"
+    markup2 = InlineKeyboardMarkup()
+    markup2.add(
+        InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
+    )
+    bot.send_message(chat_id, text2, reply_markup=markup2)
 
 # ============================
 # 🔹 Background Bot Polling
