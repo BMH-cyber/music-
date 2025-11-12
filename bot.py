@@ -1,6 +1,6 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from flask import Flask, request
+from flask import Flask
 import threading
 import os
 
@@ -27,27 +27,15 @@ def send_welcome(message):
     chat_id = message.chat.id
 
     text = (
-        "<b>🎬 ညီကိုတို့အတွက်အပန်းဖြေရာ 👇</b>\n\n"
-        "<b>🎬 Main Channel:</b>\n"
-        "<a href='https://t.me/+FS5GVrQz-9xjMWNl'>👉 Join Here</a>\n\n"
-        "<b>🎬 Second Chance:</b>\n"
-        "<a href='https://t.me/+CziNFfkLJSRjNjBl'>👉 Join Here</a>\n\n"
-        "<b>💬 Chat Group 1:</b>\n"
-        "<a href='https://t.me/+RqYCRdFavhM0NTc1'>👉 Join Here</a>\n\n"
-        "<b>💬 Chat Group 2:</b>\n"
-        "<a href='https://t.me/+qOU88Pm12pMzZGM1'>👉 Join Here</a>\n\n"
-        "<b>📂 Folders (Dark 4u Collection):</b>\n"
-        "<a href='https://t.me/addlist/T_JawSxSbmA3ZTRl'>👉 Click to Open All</a>\n\n"
-        "✨ တစ်ခါတည်းအားလုံးကိုတစ်ပြိုင်နက်ဝင်ချင်တဲ့ညီကိုတွေက "
-        "<b>အောက်က 📂 Folder Link ကိုနှိပ်ပါ။</b>\n\n"
-        "🌞 <i>သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰</i>\n"
-        "💖 <i>ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီတိုင်းကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်။</i>"
+        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰\n"
+        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီတိုင်းကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်"
     )
 
+    # Buttons (Bottom Click)
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
-        InlineKeyboardButton("🎬 Second Chance", url="https://t.me/+CziNFfkLJSRjNjBl")
+        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl")  # ✅ Name changed
     )
     markup.add(
         InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
