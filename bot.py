@@ -1,69 +1,72 @@
-# bot.py
-import os
-from flask import Flask, request
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from flask import Flask, request
+import threading
+import os
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-if not BOT_TOKEN or not WEBHOOK_URL:
-    raise ValueError("❌ BOT_TOKEN or WEBHOOK_URL missing!")
-
+# ============================
+# 🔹 Telegram Bot Token
+# ============================
+BOT_TOKEN = "8406720651:AAEN4Na5i5s9NLGgkFJLEx4rx8XCPSSqbPQ"
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+
+# ============================
+# 🔹 Flask App for Railway
+# ============================
 app = Flask(__name__)
 
-# ===== Webhook Setup =====
-def setup_webhook():
-    import requests
-    requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
-    requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}")
-    print("✅ Webhook set successfully")
+@app.route('/')
+def home():
+    return "✅ Telegram Bot is Running on Railway!"
 
-# ===== /start Command =====
-START_MESSAGE = """ညီကိုတို့အတွက် အပန်းဖြေရာ 🥵
-
-တစ်ခုချင်းဝင်ချင်တဲ့ညီကိုတွေအတွက်ကတော့အောက်ကခလုတ်တွေပါ ❤️
-
-သာယာသောနေ့လေးဖြစ်ပါစေညိုကီတို့ 😘"""
-
+# ============================
+# 🔹 Handle /start Command
+# ============================
 @bot.message_handler(commands=['start'])
-def start_handler(message):
-    markup = telebot.types.InlineKeyboardMarkup()
+def send_welcome(message):
+    chat_id = message.chat.id
+
+    text = (
+        "<b>🎬 ညီကိုတို့အတွက်အပန်းဖြေရာ 👇</b>\n\n"
+        "<b>🎬 Main Channel:</b>\n"
+        "<a href='https://t.me/+FS5GVrQz-9xjMWNl'>👉 Join Here</a>\n\n"
+        "<b>🎬 Second Chance:</b>\n"
+        "<a href='https://t.me/+CziNFfkLJSRjNjBl'>👉 Join Here</a>\n\n"
+        "<b>💬 Chat Group 1:</b>\n"
+        "<a href='https://t.me/+RqYCRdFavhM0NTc1'>👉 Join Here</a>\n\n"
+        "<b>💬 Chat Group 2:</b>\n"
+        "<a href='https://t.me/+qOU88Pm12pMzZGM1'>👉 Join Here</a>\n\n"
+        "<b>📂 Folders (Dark 4u Collection):</b>\n"
+        "<a href='https://t.me/addlist/T_JawSxSbmA3ZTRl'>👉 Click to Open All</a>\n\n"
+        "✨ တစ်ခါတည်းအားလုံးကိုတစ်ပြိုင်နက်ဝင်ချင်တဲ့ညီကိုတွေက "
+        "<b>အောက်က 📂 Folder Link ကိုနှိပ်ပါ။</b>\n\n"
+        "🌞 <i>သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰</i>\n"
+        "💖 <i>ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီတိုင်းကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်။</i>"
+    )
+
+    markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        telebot.types.InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
-        telebot.types.InlineKeyboardButton("🎵 MV Channel", url="https://t.me/+CziNFfkLJSRjNjBl")
+        InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
+        InlineKeyboardButton("🎬 Second Chance", url="https://t.me/+CziNFfkLJSRjNjBl")
     )
     markup.add(
-        telebot.types.InlineKeyboardButton("💬 Main Chat", url="https://t.me/+RqYCRdFavhM0NTc1"),
-        telebot.types.InlineKeyboardButton("💭 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
+        InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
+        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
     )
     markup.add(
-        telebot.types.InlineKeyboardButton("🌐 Join All Groups", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
+        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/T_JawSxSbmA3ZTRl")
     )
-    bot.send_message(message.chat.id, START_MESSAGE, reply_markup=markup, disable_web_page_preview=True)
 
-# ===== /about Command =====
-ABOUT_MESSAGE = "ကြော်ငြာကိစ္စများအတွက်ဆက်သွယ်ရန် 👇 @twentyfour7ithinkingaboutyou"
+    bot.send_message(chat_id, text, reply_markup=markup)
 
-@bot.message_handler(commands=['about'])
-def about_handler(message):
-    bot.send_message(message.chat.id, ABOUT_MESSAGE)
+# ============================
+# 🔹 Background Bot Polling
+# ============================
+threading.Thread(target=lambda: bot.polling(non_stop=True, skip_pending=True)).start()
 
-# ===== Webhook Route =====
-@app.route(f"/{BOT_TOKEN}", methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode('utf-8')
-    if json_str:
-        update = telebot.types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-    return "!", 200
-
-# ===== Health Check =====
-@app.route("/")
-def index():
-    return "✅ Bot is running!"
-
-# ===== Run App =====
-if __name__=="__main__":
-    PORT = int(os.environ.get("PORT", 8080))
-    setup_webhook()
-    app.run(host="0.0.0.0", port=PORT)
+# ============================
+# 🔹 Flask App Run (for Railway)
+# ============================
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
