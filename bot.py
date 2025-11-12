@@ -52,7 +52,7 @@ def send_welcome(message):
         InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
     )
     markup1.add(
-        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/Occ65hONrGk1Y2Y1")
+        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/g5Ni0eOHOeE5ZGJl")
     )
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
