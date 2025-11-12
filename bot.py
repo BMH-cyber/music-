@@ -20,7 +20,7 @@ def home():
     return "✅ Telegram Bot is Running on Railway!"
 
 # ============================
-# 🔹 Function to send second message
+# 🔹 Function to send second message (Admin)
 # ============================
 def send_second_message(chat_id):
     text2 = "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်"
@@ -37,27 +37,33 @@ def send_second_message(chat_id):
 def send_welcome(message):
     chat_id = message.chat.id
 
-    # 🔹 ပထမ Message (သာယာသောနေ့ + ကျေးဇူး)
+    # 🔹 ပထမ Message (Main Buttons)
     text1 = (
         "🌞 သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီတိုင်းကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်"
+        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်"
     )
+
     markup1 = InlineKeyboardMarkup(row_width=2)
     markup1.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
         InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl")
     )
     markup1.add(
-        InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
-        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
+        InlineKeyboardButton("📖 Story Channel", url="https://t.me/+ADv5LABjD2M0ODE1"),
+        InlineKeyboardButton("🇯🇵 Japan Channel", url="https://t.me/+eoWKOuTw4OEyMzI1")
     )
     markup1.add(
+        InlineKeyboardButton("🔥 Only Fan Channel", url="https://t.me/+tgso0l2Hti8wYTNl"),
+        InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1")
+    )
+    markup1.add(
+        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/g5Ni0eOHOeE5ZGJl")
     )
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # 🔹 Thread နဲ့ ဒုတိယ message ပို့ခြင်း
+    # 🔹 Thread နဲ့ ဒုတိယ message (Admin Account)
     threading.Thread(target=send_second_message, args=(chat_id,)).start()
 
 # ============================
