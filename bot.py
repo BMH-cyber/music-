@@ -52,13 +52,18 @@ def send_welcome(message):
         InlineKeyboardButton("📖 Story Channel", url="https://t.me/+ADv5LABjD2M0ODE1"),
         InlineKeyboardButton("🇯🇵 Japan Channel", url="https://t.me/+eoWKOuTw4OEyMzI1")
     )
+    # 🔹 Only Fan + Hantai Channel row
     markup1.add(
         InlineKeyboardButton("🔥 Only Fan Channel", url="https://t.me/+tgso0l2Hti8wYTNl"),
-        InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1")
+        InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl")
     )
     markup1.add(
-        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
-        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/g5Ni0eOHOeE5ZGJl")
+        InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
+        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
+    )
+    # 🔹 Updated Dark 4u Folder link
+    markup1.add(
+        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
     )
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
