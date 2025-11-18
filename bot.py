@@ -4,7 +4,7 @@ from flask import Flask, request
 import os
 
 # ============================
-# 🔹 Bot Token
+# Bot Token
 # ============================
 BOT_TOKEN = "8406720651:AAEN4Na5i5s9NLGgkFJLEx4rx8XCPSSqbPQ"
 WEBHOOK_PATH = "/" + BOT_TOKEN
@@ -14,14 +14,14 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 # ============================
-# 🔹 Home Route
+# Home Route
 # ============================
 @app.route("/")
 def home():
     return "✅ Bot is running!"
 
 # ============================
-# 🔹 Webhook Route
+# Webhook Route
 # ============================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
@@ -31,7 +31,7 @@ def webhook():
     return "OK", 200
 
 # ============================
-# 🔹 /start Command
+# /start Command
 # ============================
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -72,7 +72,7 @@ def start(message):
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
 
 # ============================
-# 🔹 Run App + Set Webhook
+# Run App + Set Webhook
 # ============================
 if __name__ == "__main__":
     # Remove old webhook and set new one
