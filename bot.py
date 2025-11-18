@@ -3,6 +3,9 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 import os
 
+# ============================
+# 🔹 Bot Token
+# ============================
 BOT_TOKEN = "8406720651:AAEN4Na5i5s9NLGgkFJLEx4rx8XCPSSqbPQ"
 WEBHOOK_PATH = "/" + BOT_TOKEN
 WEBHOOK_URL = "https://music-production-fecd.up.railway.app" + WEBHOOK_PATH
@@ -10,16 +13,16 @@ WEBHOOK_URL = "https://music-production-fecd.up.railway.app" + WEBHOOK_PATH
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# --------------------------
-#   HOME ROUTE
-# --------------------------
+# ============================
+# 🔹 Home Route
+# ============================
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "✅ Bot is running!"
 
-# --------------------------
-#   WEBHOOK ROUTE
-# --------------------------
+# ============================
+# 🔹 Webhook Route
+# ============================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
     json_data = request.get_data().decode("utf-8")
@@ -27,9 +30,9 @@ def webhook():
     bot.process_new_updates([update])
     return "OK", 200
 
-# --------------------------
-#   START COMMAND
-# --------------------------
+# ============================
+# 🔹 /start Command
+# ============================
 @bot.message_handler(commands=["start"])
 def start(message):
     chat_id = message.chat.id
@@ -61,18 +64,20 @@ def start(message):
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # second message
+    # Second message
     markup2 = InlineKeyboardMarkup()
     markup2.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
     )
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
 
-# --------------------------
-#   RUN + SET WEBHOOK
-# --------------------------
+# ============================
+# 🔹 Run App + Set Webhook
+# ============================
 if __name__ == "__main__":
+    # Remove old webhook and set new one
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
 
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
