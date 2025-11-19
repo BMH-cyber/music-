@@ -1,5 +1,5 @@
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from flask import Flask, request
 import os
 import threading
@@ -17,7 +17,7 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 # ============================
-# Home Route
+# Home Route (UptimeRobot ping)
 # ============================
 @app.route("/", methods=["GET"])
 def home():
@@ -81,15 +81,16 @@ def start(message):
     )
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
 
-    # Optional: Send welcome photo/video
+    # Optional: welcome photo
     try:
-        media_photo = InputMediaPhoto("https://i.imgur.com/Z6V7wZk.png", caption="Welcome to our channels!")
+        photo_url = "https://i.imgur.com/Z6V7wZk.png"  # Replace with your own
+        media_photo = InputMediaPhoto(photo_url, caption="Welcome to our channels!")
         bot.send_media_group(chat_id, [media_photo])
-    except:
-        pass
+    except Exception as e:
+        print("Photo send error:", e)
 
 # ============================
-# Keep-alive function (Railway Free Dyno)
+# Keep-alive for Railway free dyno
 # ============================
 def keep_alive():
     while True:
