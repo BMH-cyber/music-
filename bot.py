@@ -2,11 +2,9 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 import os
-import time
-import threading
 
 # ============================
-# 🔹 Telegram Bot Token
+# Bot Token
 # ============================
 BOT_TOKEN = "8406720651:AAEN4Na5i5s9NLGgkFJLEx4rx8XCPSSqbPQ"
 WEBHOOK_PATH = "/" + BOT_TOKEN
@@ -16,24 +14,24 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 # ============================
-# 🔹 Home Route
+# Home Route
 # ============================
 @app.route("/")
 def home():
-    return "✅ Telegram Bot is running on Railway!"
+    return "✅ Bot is running!"
 
 # ============================
-# 🔹 Webhook Route
+# Webhook Route (FIXED)
 # ============================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    json_data = request.get_json(force=True)
+    json_data = request.get_json(force=True)  # <-- Fixed
     update = telebot.types.Update.de_json(json_data)
     bot.process_new_updates([update])
     return "OK", 200
 
 # ============================
-# 🔹 /start Command
+# /start Command
 # ============================
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -66,7 +64,7 @@ def start(message):
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # Second message (Admin)
+    # Second message
     markup2 = InlineKeyboardMarkup()
     markup2.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
@@ -74,26 +72,12 @@ def start(message):
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
 
 # ============================
-# 🔹 Keep Alive Thread (Optional)
-# ============================
-def keep_alive():
-    while True:
-        try:
-            print("🔄 Keep-alive ping…")
-        except:
-            pass
-        time.sleep(20)
-
-# ============================
-# 🔹 Run App + Webhook
+# Run App + Set Webhook
 # ============================
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
     print("✅ Webhook Set:", WEBHOOK_URL)
-
-    # Start keep-alive thread
-    threading.Thread(target=keep_alive).start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
