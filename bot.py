@@ -18,14 +18,14 @@ app = Flask(__name__)
 # ============================
 @app.route("/")
 def home():
-    return "✅ Bot is running!"
+    return "✅ Bot is running successfully on Railway!"
 
 # ============================
 # Webhook Route
 # ============================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    json_data = request.get_data().decode("utf-8")
+    json_data = request.get_json(force=True)
     update = telebot.types.Update.de_json(json_data)
     bot.process_new_updates([update])
     return "OK", 200
@@ -42,6 +42,7 @@ def start(message):
     )
 
     markup1 = InlineKeyboardMarkup(row_width=2)
+
     markup1.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
         InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl"),
@@ -75,7 +76,6 @@ def start(message):
 # Run App + Set Webhook
 # ============================
 if __name__ == "__main__":
-    # Remove old webhook and set new one
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
 
