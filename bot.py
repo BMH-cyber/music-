@@ -20,15 +20,15 @@ app = Flask(__name__)
 # ============================
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Telegram Bot is running on Railway!"
+    return "✅ Bot is running!"
 
 # ============================
-# Webhook Route (Fixed)
+# Webhook Route
 # ============================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
     try:
-        json_data = request.get_json(force=True)  # Telegram update parse
+        json_data = request.get_json(force=True)
         if json_data:
             update = telebot.types.Update.de_json(json_data)
             bot.process_new_updates([update])
@@ -70,7 +70,6 @@ def start(message):
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # Admin contact
     markup2 = InlineKeyboardMarkup()
     markup2.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
@@ -78,25 +77,28 @@ def start(message):
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
 
 # ============================
-# Optional Keep-alive Thread (Railway 24/7)
+# Keep-alive function (Railway Free Dyno)
 # ============================
 def keep_alive():
+    import requests
     while True:
         try:
-            print("🔄 Keep-alive ping…")
+            url = os.environ.get("WEBHOOK_URL", "https://music-production-fecd.up.railway.app/")
+            requests.get(url)
+            print("🔄 Keep-alive ping sent")
         except:
             pass
-        time.sleep(20)
+        time.sleep(240)  # every 4 minutes
 
 # ============================
-# Run App + Set Webhook
+# Run App + Webhook
 # ============================
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
     print("✅ Webhook Set:", WEBHOOK_URL)
 
-    threading.Thread(target=keep_alive).start()
+    threading.Thread(target=keep_alive, daemon=True).start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
