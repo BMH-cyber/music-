@@ -1,9 +1,10 @@
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
 from flask import Flask, request
 import os
 import threading
 import time
+import requests
 
 # ============================
 # Bot Token
@@ -20,7 +21,7 @@ app = Flask(__name__)
 # ============================
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Bot is running!"
+    return "✅ Telegram Bot is running!"
 
 # ============================
 # Webhook Route
@@ -42,27 +43,30 @@ def webhook():
 @bot.message_handler(commands=["start"])
 def start(message):
     chat_id = message.chat.id
+
+    # Text message
     text1 = (
         "🌞 သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰\n"
         "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်"
     )
 
+    # Inline keyboard for channels
     markup1 = InlineKeyboardMarkup(row_width=2)
     markup1.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
-        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl"),
+        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl")
     )
     markup1.add(
         InlineKeyboardButton("📖 Story Channel", url="https://t.me/+ADv5LABjD2M0ODE1"),
-        InlineKeyboardButton("🇯🇵 Japan Channel", url="https://t.me/+eoWKOuTw4OEyMzI1"),
+        InlineKeyboardButton("🇯🇵 Japan Channel", url="https://t.me/+eoWKOuTw4OEyMzI1")
     )
     markup1.add(
         InlineKeyboardButton("🔥 Only Fan Channel", url="https://t.me/+tgso0l2Hti8wYTNl"),
-        InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl"),
+        InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl")
     )
     markup1.add(
         InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
-        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
+        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
     )
     markup1.add(
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
@@ -70,17 +74,24 @@ def start(message):
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
+    # Admin contact
     markup2 = InlineKeyboardMarkup()
     markup2.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
     )
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
 
+    # Optional: Send welcome photo/video
+    try:
+        media_photo = InputMediaPhoto("https://i.imgur.com/Z6V7wZk.png", caption="Welcome to our channels!")
+        bot.send_media_group(chat_id, [media_photo])
+    except:
+        pass
+
 # ============================
 # Keep-alive function (Railway Free Dyno)
 # ============================
 def keep_alive():
-    import requests
     while True:
         try:
             url = os.environ.get("WEBHOOK_URL", "https://music-production-fecd.up.railway.app/")
