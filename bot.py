@@ -2,6 +2,8 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 import os
+import threading
+import time
 
 # ============================
 # Bot Token
@@ -16,18 +18,22 @@ app = Flask(__name__)
 # ============================
 # Home Route
 # ============================
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
-    return "✅ Bot is running!"
+    return "✅ Telegram Bot is running on Railway!"
 
 # ============================
-# Webhook Route (FIXED)
+# Webhook Route (Fixed)
 # ============================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    json_data = request.get_json(force=True)  # <-- Fixed
-    update = telebot.types.Update.de_json(json_data)
-    bot.process_new_updates([update])
+    try:
+        json_data = request.get_json(force=True)  # Telegram update parse
+        if json_data:
+            update = telebot.types.Update.de_json(json_data)
+            bot.process_new_updates([update])
+    except Exception as e:
+        print("Webhook error:", e)
     return "OK", 200
 
 # ============================
@@ -64,12 +70,23 @@ def start(message):
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # Second message
+    # Admin contact
     markup2 = InlineKeyboardMarkup()
     markup2.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
     )
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
+
+# ============================
+# Optional Keep-alive Thread (Railway 24/7)
+# ============================
+def keep_alive():
+    while True:
+        try:
+            print("🔄 Keep-alive ping…")
+        except:
+            pass
+        time.sleep(20)
 
 # ============================
 # Run App + Set Webhook
@@ -78,6 +95,8 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
     print("✅ Webhook Set:", WEBHOOK_URL)
+
+    threading.Thread(target=keep_alive).start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
