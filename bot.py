@@ -6,13 +6,13 @@ import threading
 import time
 import requests
 
-# Load environment variables
+# Load env variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 APP_URL = os.getenv("APP_URL")
 PORT = int(os.getenv("PORT", 8080))
 
 if not BOT_TOKEN or not APP_URL:
-    raise Exception("❌ BOT_TOKEN or APP_URL is missing in .env")
+    raise Exception("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
@@ -20,7 +20,7 @@ app = Flask(__name__)
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Home route for Healthcheck
+# Home route
 # -----------------------------
 @app.route("/", methods=["GET"])
 def home():
@@ -45,11 +45,7 @@ def webhook():
 @bot.message_handler(commands=["start"])
 def start(message):
     chat_id = message.chat.id
-
-    text1 = (
-        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    )
+    text1 = "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
 
     markup1 = InlineKeyboardMarkup(row_width=2)
     markup1.add(
@@ -63,17 +59,14 @@ def start(message):
         InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl"),
     )
-
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
     markup2 = InlineKeyboardMarkup()
     markup2.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
     )
-
     bot.send_message(chat_id, "📢 ကြေငြာများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
 
-    # Send welcome photo
     try:
         photo_url = "https://i.imgur.com/Z6V7wZk.png"
         bot.send_photo(chat_id, photo_url, caption="Welcome to our channels!")
@@ -81,7 +74,7 @@ def start(message):
         print("❌ Photo Error:", e)
 
 # -----------------------------
-# Keep-alive ping for Railway
+# Keep-alive
 # -----------------------------
 def keep_alive():
     while True:
@@ -92,7 +85,7 @@ def keep_alive():
         time.sleep(240)
 
 # -----------------------------
-# Start Webhook & Flask
+# Start webhook + Flask
 # -----------------------------
 if __name__ == "__main__":
     try:
