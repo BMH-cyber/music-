@@ -2,17 +2,30 @@ import os
 import threading
 import time
 import requests
+import logging
+import json
 from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Load Environment Variables
+# -----------------------------
+# Logging Setup
+# -----------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+# -----------------------------
+# Environment Variables
+# -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 APP_URL = os.getenv("APP_URL")
 PORT = int(os.getenv("PORT", 8080))
 
 if not BOT_TOKEN or not APP_URL:
-    raise Exception("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
+    logging.error("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
+    raise Exception("BOT_TOKEN or APP_URL is missing")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
@@ -20,33 +33,67 @@ app = Flask(__name__)
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Home route
+# Admin ID
+# -----------------------------
+ADMIN_IDS = [5720351176]  # Admin Telegram ID
+
+# -----------------------------
+# Auto Join Groups Storage
+# -----------------------------
+GROUPS_FILE = "joined_groups.json"
+
+def load_groups():
+    try:
+        with open(GROUPS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_group(chat_id):
+    groups = load_groups()
+    if chat_id not in groups:
+        groups.append(chat_id)
+        with open(GROUPS_FILE, "w") as f:
+            json.dump(groups, f)
+        logging.info(f"New group saved: {chat_id}")
+
+# -----------------------------
+# Home Route
 # -----------------------------
 @app.route("/", methods=["GET"])
 def home():
     return "✅ Telegram Bot is running!"
 
 # -----------------------------
-# Webhook route
+# Webhook Route
 # -----------------------------
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         json_data = request.get_json(force=True)
-        update = telebot.types.Update.de_json(json_data)
-        bot.process_new_updates([update])
+        if json_data:
+            update = telebot.types.Update.de_json(json_data)
+            bot.process_new_updates([update])
+        else:
+            logging.warning("Webhook received empty JSON")
     except Exception as e:
-        print("❌ Webhook Error:", e)
+        logging.error("❌ Webhook processing error: %s", e)
     return "OK", 200
 
 # -----------------------------
-# Function to send welcome message with buttons
+# Send Welcome Function
 # -----------------------------
 def send_welcome(chat_id, name=""):
-    text1 = f"🌞 {name}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်" if name else "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
+    text = (
+        f"🌞 {name}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
+        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
+    ) if name else (
+        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
+        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
+    )
 
-    markup1 = InlineKeyboardMarkup(row_width=2)
-    markup1.add(
+    markup_channels = InlineKeyboardMarkup(row_width=2)
+    markup_channels.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
         InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl"),
         InlineKeyboardButton("📖 Story Channel", url="https://t.me/+ADv5LABjD2M0ODE1"),
@@ -58,55 +105,119 @@ def send_welcome(chat_id, name=""):
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
     )
 
-    bot.send_message(chat_id, text1, reply_markup=markup1)
+    try:
+        bot.send_message(chat_id, text, reply_markup=markup_channels)
+    except Exception as e:
+        logging.error("❌ Error sending welcome channels: %s", e)
 
-    markup2 = InlineKeyboardMarkup()
-    markup2.add(
+    markup_admin = InlineKeyboardMarkup()
+    markup_admin.add(
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
     )
-    bot.send_message(chat_id, "📢 ကြေငြာများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
+
+    try:
+        bot.send_message(chat_id, "📢 ကြေငြာများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup_admin)
+    except Exception as e:
+        logging.error("❌ Error sending admin contact: %s", e)
 
 # -----------------------------
-# /start command
+# /start Command
 # -----------------------------
 @bot.message_handler(commands=["start"])
 def start(message):
     send_welcome(message.chat.id)
+    save_group(message.chat.id)
 
 # -----------------------------
-# New chat member auto welcome with username/first_name
+# New Chat Member Welcome & Auto Track Group
 # -----------------------------
 @bot.message_handler(content_types=["new_chat_members"])
 def new_member_welcome(message):
+    save_group(message.chat.id)
     for member in message.new_chat_members:
-        # Username or first_name
         name = f"@{member.username}" if member.username else member.first_name
         send_welcome(message.chat.id, name=name)
 
 # -----------------------------
-# Keep-alive thread (optional)
+# /broadcast Command (Admin Only)
+# -----------------------------
+@bot.message_handler(commands=["broadcast"])
+def broadcast_start(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "❌ သင့်မှာ permission မရှိပါ")
+        return
+
+    msg = bot.reply_to(message, "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text only)၊\n📸 ပုံပါမယ်ဆိုရင် image လို့ပို့ပါ:")
+    bot.register_next_step_handler(msg, ask_for_media)
+
+def ask_for_media(message):
+    """
+    Admin can send text or photo with caption
+    """
+    if message.content_type == "photo":
+        # photo + optional caption
+        caption = message.caption if message.caption else ""
+        broadcast_photo(message.photo[-1].file_id, caption)
+    elif message.content_type == "text":
+        broadcast_text(message.text)
+    else:
+        bot.reply_to(message, "❌ Unsupported content. Please send text or photo.")
+        return
+
+def broadcast_text(text):
+    targets = load_groups()
+    success, failed = 0, 0
+    for chat_id in targets:
+        try:
+            bot.send_message(chat_id, text)
+            success += 1
+        except Exception as e:
+            logging.warning("Failed to send to %s: %s", chat_id, e)
+            failed += 1
+    bot.reply_to(message=None, text=f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+
+def broadcast_photo(file_id, caption=""):
+    targets = load_groups()
+    success, failed = 0, 0
+    for chat_id in targets:
+        try:
+            bot.send_photo(chat_id, file_id, caption=caption)
+            success += 1
+        except Exception as e:
+            logging.warning("Failed to send photo to %s: %s", chat_id, e)
+            failed += 1
+    bot.reply_to(message=None, text=f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+
+# -----------------------------
+# Keep-Alive Thread
 # -----------------------------
 def keep_alive():
     while True:
         try:
-            requests.get(APP_URL)
-        except:
-            pass
-        time.sleep(240)  # every 4 min
+            resp = requests.get(APP_URL, timeout=10)
+            logging.info("Keep-alive ping response: %s", resp.status_code)
+        except Exception as e:
+            logging.warning("Keep-alive ping failed: %s", e)
+        time.sleep(240)
 
 # -----------------------------
-# Set webhook before starting server
+# Setup Webhook
 # -----------------------------
 def setup_webhook():
     try:
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=WEBHOOK_URL)
-        print("✅ Webhook set:", WEBHOOK_URL)
+        logging.info("✅ Webhook set: %s", WEBHOOK_URL)
     except Exception as e:
-        print("❌ Webhook setup error:", e)
+        logging.error("❌ Webhook setup error: %s", e)
+        raise
 
-setup_webhook()
-threading.Thread(target=keep_alive, daemon=True).start()
-
-# Flask app run via Gunicorn (do NOT use app.run)
+# -----------------------------
+# Start Bot
+# -----------------------------
+if __name__ == "__main__":
+    logging.info("Starting bot...")
+    setup_webhook()
+    threading.Thread(target=keep_alive, daemon=True).start()
+    logging.info("Bot is ready. Run Flask via Gunicorn, NOT app.run()")
