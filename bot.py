@@ -1,16 +1,15 @@
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 import os
 import threading
 import time
 import requests
 
-# ============================
-# Load Environment Variables
-# ============================
+# Load environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-APP_URL = os.getenv("APP_URL")  # e.g. https://music-production-fecd.up.railway.app
+APP_URL = os.getenv("APP_URL")
+PORT = int(os.getenv("PORT", 8080))
 
 if not BOT_TOKEN or not APP_URL:
     raise Exception("❌ BOT_TOKEN or APP_URL is missing in .env")
@@ -18,21 +17,18 @@ if not BOT_TOKEN or not APP_URL:
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# Correct Webhook URL
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
-
-# ============================
-# Home Route
-# ============================
+# -----------------------------
+# Home route for Healthcheck
+# -----------------------------
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Telegram Bot is running on Railway!"
+    return "✅ Telegram Bot is running!"
 
-
-# ============================
-# Webhook Route
-# ============================
+# -----------------------------
+# Webhook route
+# -----------------------------
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
@@ -43,16 +39,15 @@ def webhook():
         print("❌ Webhook Error:", e)
     return "OK", 200
 
-
-# ============================
-# /start Command Handler
-# ============================
+# -----------------------------
+# /start command
+# -----------------------------
 @bot.message_handler(commands=["start"])
 def start(message):
     chat_id = message.chat.id
 
     text1 = (
-        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰\n"
+        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
         "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
     )
 
@@ -76,31 +71,29 @@ def start(message):
         InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
     )
 
-    bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
+    bot.send_message(chat_id, "📢 ကြေငြာများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
 
-    # Send Photo (Optional)
+    # Send welcome photo
     try:
         photo_url = "https://i.imgur.com/Z6V7wZk.png"
         bot.send_photo(chat_id, photo_url, caption="Welcome to our channels!")
     except Exception as e:
         print("❌ Photo Error:", e)
 
-
-# ============================
-# Keep-alive Function
-# ============================
+# -----------------------------
+# Keep-alive ping for Railway
+# -----------------------------
 def keep_alive():
     while True:
         try:
             requests.get(APP_URL)
         except:
             pass
-        time.sleep(240)  # 4 minutes
+        time.sleep(240)
 
-
-# ============================
-# Start Webhook + Flask
-# ============================
+# -----------------------------
+# Start Webhook & Flask
+# -----------------------------
 if __name__ == "__main__":
     try:
         bot.remove_webhook()
@@ -111,6 +104,4 @@ if __name__ == "__main__":
         print("❌ Webhook Setup Error:", e)
 
     threading.Thread(target=keep_alive, daemon=True).start()
-
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=PORT)
