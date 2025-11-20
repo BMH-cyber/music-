@@ -7,17 +7,18 @@ import time
 import requests
 
 # ============================
-# Bot Token
+# Load Environment Variables
 # ============================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+APP_URL = os.getenv("APP_URL")  # e.g. https://music-production-fecd.up.railway.app
+
+if not BOT_TOKEN or not APP_URL:
+    raise Exception("❌ BOT_TOKEN or APP_URL is missing in .env")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ============================
-# Webhook URL (Correct Version)
-# ============================
-APP_URL = "https://music-production-fecd.up.railway.app"
+# Correct Webhook URL
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 
@@ -35,18 +36,16 @@ def home():
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        json_data = request.get_json(force=True)
-        if json_data:
-            update = telebot.types.Update.de_json(json_data)
-            bot.process_new_updates([update])
+        data = request.get_json(force=True)
+        update = telebot.types.Update.de_json(data)
+        bot.process_new_updates([update])
     except Exception as e:
-        print("Webhook Error:", e)
-
+        print("❌ Webhook Error:", e)
     return "OK", 200
 
 
 # ============================
-# /start Handler
+# /start Command Handler
 # ============================
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -67,47 +66,49 @@ def start(message):
         InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl"),
         InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
         InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
-        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
+        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl"),
     )
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
     markup2 = InlineKeyboardMarkup()
-    markup2.add(InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou"))
+    markup2.add(
+        InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
+    )
+
     bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
 
+    # Send Photo (Optional)
     try:
         photo_url = "https://i.imgur.com/Z6V7wZk.png"
-        media_photo = InputMediaPhoto(photo_url, caption="Welcome to our channels!")
-        bot.send_media_group(chat_id, [media_photo])
+        bot.send_photo(chat_id, photo_url, caption="Welcome to our channels!")
     except Exception as e:
-        print("Photo send error:", e)
+        print("❌ Photo Error:", e)
 
 
 # ============================
-# Keep-alive for Railway Free Plan
+# Keep-alive Function
 # ============================
 def keep_alive():
     while True:
         try:
             requests.get(APP_URL)
-        except Exception:
+        except:
             pass
-
-        time.sleep(240)
+        time.sleep(240)  # 4 minutes
 
 
 # ============================
-# Run App + Webhook Setup
+# Start Webhook + Flask
 # ============================
 if __name__ == "__main__":
     try:
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=WEBHOOK_URL)
-        print("✅ Webhook set:", WEBHOOK_URL)
+        print("✅ Webhook Set:", WEBHOOK_URL)
     except Exception as e:
-        print("Webhook Set Error:", e)
+        print("❌ Webhook Setup Error:", e)
 
     threading.Thread(target=keep_alive, daemon=True).start()
 
