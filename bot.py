@@ -134,14 +134,22 @@ def start(message):
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
-        # Username ရှိရင် @username, Username မရှိရင် first_name only, မရှိရင် skip
+        # Username ရှိရင် @username
         if getattr(member, "username", None):
             mention_text = f"@{member.username}"
-        elif getattr(member, "first_name", None):
-            mention_text = member.first_name
+        # username မရှိရင် first_name + last_name combine (သိရင်)
         else:
-            continue  # မည်သည့် name မရှိပါက skip
-
+            names = []
+            if getattr(member, "first_name", None):
+                names.append(member.first_name)
+            if getattr(member, "last_name", None):
+                names.append(member.last_name)
+            if names:
+                mention_text = " ".join(names)
+            else:
+                # အမည်မရှိဘူးဆိုရင် id ဖြင့် mention
+                mention_text = f"User"
+        
         # Clickable mention
         mention_link = f"[{mention_text}](tg://user?id={member.id})"
         send_welcome(message.chat.id, mention_link=mention_link)
