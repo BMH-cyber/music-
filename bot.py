@@ -83,14 +83,8 @@ def webhook():
 # -----------------------------
 # Send Welcome Function
 # -----------------------------
-def send_welcome(chat_id, name=""):
-    text = (
-        f"🌞 {name}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    ) if name else (
-        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    )
+def send_welcome(chat_id, mention=None):
+    text = f"🌞 {mention}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်" if mention else "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
 
     markup_channels = InlineKeyboardMarkup(row_width=2)
     markup_channels.add(
@@ -129,47 +123,57 @@ def start(message):
     save_group(message.chat.id)
 
 # -----------------------------
-# New Chat Member Welcome & Auto Track Group
+# New Chat Member Welcome
 # -----------------------------
 @bot.message_handler(content_types=["new_chat_members"])
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
-        name = f"@{member.username}" if member.username else member.first_name
-        send_welcome(message.chat.id, name=name)
+        mention = None
+        if getattr(member, "username", None):
+            mention = f"@{member.username}"
+        elif getattr(member, "first_name", None):
+            mention = member.first_name
+        elif getattr(member, "last_name", None):
+            mention = member.last_name
+
+        send_welcome(message.chat.id, mention=mention)
 
 # -----------------------------
-# /broadcast Command (Admin Only)
+# /broadcast Command (Text/Photo/Video)
 # -----------------------------
 @bot.message_handler(commands=["broadcast"])
-def broadcast_start(message):
+def broadcast(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ သင့်မှာ permission မရှိပါ")
         return
 
+    # Text in same message
+    content = message.text.partition(" ")[2]
+    if content:
+        _broadcast_text(content, message.chat.id)
+        return
+
+    # Ask admin for media
     msg = bot.reply_to(message, "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text, Photo, Video)၊\n📸 ပုံ/Video ပါမယ်ဆိုရင် ပို့ပါ:")
     bot.register_next_step_handler(msg, ask_for_media)
 
 def ask_for_media(message):
-    """
-    Admin can send text, photo, or video with caption
-    """
     if message.content_type == "photo":
         caption = message.caption if message.caption else ""
-        broadcast_photo(message.photo[-1].file_id, caption, message.from_user.id)
+        _broadcast_photo(message.photo[-1].file_id, caption, message.chat.id)
     elif message.content_type == "video":
         caption = message.caption if message.caption else ""
-        broadcast_video(message.video.file_id, caption, message.from_user.id)
+        _broadcast_video(message.video.file_id, caption, message.chat.id)
     elif message.content_type == "text":
-        broadcast_text(message.text, message.from_user.id)
+        _broadcast_text(message.text, message.chat.id)
     else:
         bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
-        return
 
-def broadcast_text(text, admin_id):
-    targets = load_groups()
+def _broadcast_text(text, admin_id):
+    groups = load_groups()
     success, failed = 0, 0
-    for chat_id in targets:
+    for chat_id in groups:
         try:
             bot.send_message(chat_id, text)
             success += 1
@@ -178,10 +182,10 @@ def broadcast_text(text, admin_id):
             failed += 1
     bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
 
-def broadcast_photo(file_id, caption, admin_id):
-    targets = load_groups()
+def _broadcast_photo(file_id, caption, admin_id):
+    groups = load_groups()
     success, failed = 0, 0
-    for chat_id in targets:
+    for chat_id in groups:
         try:
             bot.send_photo(chat_id, file_id, caption=caption)
             success += 1
@@ -190,10 +194,10 @@ def broadcast_photo(file_id, caption, admin_id):
             failed += 1
     bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
 
-def broadcast_video(file_id, caption, admin_id):
-    targets = load_groups()
+def _broadcast_video(file_id, caption, admin_id):
+    groups = load_groups()
     success, failed = 0, 0
-    for chat_id in targets:
+    for chat_id in groups:
         try:
             bot.send_video(chat_id, file_id, caption=caption)
             success += 1
