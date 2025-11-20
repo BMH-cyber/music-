@@ -20,7 +20,7 @@ app = Flask(__name__)
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Home route (Uptime check)
+# Home route
 # -----------------------------
 @app.route("/", methods=["GET"])
 def home():
@@ -40,11 +40,9 @@ def webhook():
     return "OK", 200
 
 # -----------------------------
-# /start command
+# Function to send welcome message with buttons
 # -----------------------------
-@bot.message_handler(commands=["start"])
-def start(message):
-    chat_id = message.chat.id
+def send_welcome(chat_id):
     text1 = "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
 
     markup1 = InlineKeyboardMarkup(row_width=2)
@@ -67,11 +65,20 @@ def start(message):
     )
     bot.send_message(chat_id, "📢 ကြေငြာများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
 
-    try:
-        photo_url = "https://i.imgur.com/Z6V7wZk.png"
-        bot.send_photo(chat_id, photo_url, caption="Welcome to our channels!")
-    except Exception as e:
-        print("❌ Photo Error:", e)
+# -----------------------------
+# /start command
+# -----------------------------
+@bot.message_handler(commands=["start"])
+def start(message):
+    send_welcome(message.chat.id)
+
+# -----------------------------
+# New chat member auto welcome
+# -----------------------------
+@bot.message_handler(content_types=["new_chat_members"])
+def new_member_welcome(message):
+    for member in message.new_chat_members:
+        send_welcome(message.chat.id)
 
 # -----------------------------
 # Keep-alive thread (optional)
@@ -99,6 +106,4 @@ def setup_webhook():
 setup_webhook()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# -----------------------------
-# Run Flask app via Gunicorn (no app.run)
-# -----------------------------
+# Flask app run via Gunicorn (no app.run)
