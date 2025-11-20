@@ -27,7 +27,7 @@ if not BOT_TOKEN or not APP_URL:
     logging.error("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
     raise Exception("BOT_TOKEN or APP_URL is missing")
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 app = Flask(__name__)
 
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
@@ -83,14 +83,13 @@ def webhook():
 # -----------------------------
 # Send Welcome Function
 # -----------------------------
-def send_welcome(chat_id, name=""):
-    text = (
-        f"🌞 {name}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    ) if name else (
-        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    )
+def send_welcome(chat_id, mention_link=None):
+    if mention_link:
+        welcome_text = f"🌞 {mention_link}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n" \
+                       "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
+    else:
+        welcome_text = "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n" \
+                       "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
 
     markup_channels = InlineKeyboardMarkup(row_width=2)
     markup_channels.add(
@@ -106,7 +105,7 @@ def send_welcome(chat_id, name=""):
     )
 
     try:
-        bot.send_message(chat_id, text, reply_markup=markup_channels)
+        bot.send_message(chat_id, welcome_text, parse_mode="Markdown", reply_markup=markup_channels)
     except Exception as e:
         logging.error("❌ Error sending welcome channels: %s", e)
 
@@ -135,8 +134,17 @@ def start(message):
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
-        name = f"@{member.username}" if member.username else member.first_name
-        send_welcome(message.chat.id, name=name)
+        # Username ရှိရင် @username, Username မရှိရင် first_name only, မရှိရင် skip
+        if getattr(member, "username", None):
+            mention_text = f"@{member.username}"
+        elif getattr(member, "first_name", None):
+            mention_text = member.first_name
+        else:
+            continue  # မည်သည့် name မရှိပါက skip
+
+        # Clickable mention
+        mention_link = f"[{mention_text}](tg://user?id={member.id})"
+        send_welcome(message.chat.id, mention_link=mention_link)
 
 # -----------------------------
 # /broadcast Command (Admin Only)
@@ -151,9 +159,6 @@ def broadcast_start(message):
     bot.register_next_step_handler(msg, ask_for_media)
 
 def ask_for_media(message):
-    """
-    Admin can send text, photo, or video with caption
-    """
     if message.content_type == "photo":
         caption = message.caption if message.caption else ""
         broadcast_photo(message.photo[-1].file_id, caption, message.from_user.id)
