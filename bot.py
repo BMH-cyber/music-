@@ -9,24 +9,30 @@ import requests
 # ============================
 # Bot Token
 # ============================
-BOT_TOKEN = "8406720651:AAEN4Na5i5s9NLGgkFJLEx4rx8XCPSSqbPQ"
-WEBHOOK_PATH = "/" + BOT_TOKEN
-WEBHOOK_URL = "https://music-production-fecd.up.railway.app" + WEBHOOK_PATH
+BOT_TOKEN = os.getenv("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 # ============================
-# Home Route (UptimeRobot ping)
+# Webhook URL (Correct Version)
+# ============================
+APP_URL = "https://music-production-fecd.up.railway.app"
+WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
+
+
+# ============================
+# Home Route
 # ============================
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Telegram Bot is running!"
+    return "✅ Telegram Bot is running on Railway!"
+
 
 # ============================
 # Webhook Route
 # ============================
-@app.route(WEBHOOK_PATH, methods=["POST"])
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         json_data = request.get_json(force=True)
@@ -34,81 +40,74 @@ def webhook():
             update = telebot.types.Update.de_json(json_data)
             bot.process_new_updates([update])
     except Exception as e:
-        print("Webhook error:", e)
+        print("Webhook Error:", e)
+
     return "OK", 200
 
+
 # ============================
-# /start Command
+# /start Handler
 # ============================
 @bot.message_handler(commands=["start"])
 def start(message):
     chat_id = message.chat.id
 
-    # Text message
     text1 = (
         "🌞 သာယာသောနေ့လေးဖြစ်ပါစေညီကိုတို့ရေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကိုလည်း ကျေးဇူးအထူးတင်ပါတယ်"
+        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
     )
 
-    # Inline keyboard for channels
     markup1 = InlineKeyboardMarkup(row_width=2)
     markup1.add(
         InlineKeyboardButton("🎬 Main Channel", url="https://t.me/+FS5GVrQz-9xjMWNl"),
-        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl")
-    )
-    markup1.add(
+        InlineKeyboardButton("🎬 Second Channel", url="https://t.me/+CziNFfkLJSRjNjBl"),
         InlineKeyboardButton("📖 Story Channel", url="https://t.me/+ADv5LABjD2M0ODE1"),
-        InlineKeyboardButton("🇯🇵 Japan Channel", url="https://t.me/+eoWKOuTw4OEyMzI1")
-    )
-    markup1.add(
+        InlineKeyboardButton("🇯🇵 Japan Channel", url="https://t.me/+eoWKOuTw4OEyMzI1"),
         InlineKeyboardButton("🔥 Only Fan Channel", url="https://t.me/+tgso0l2Hti8wYTNl"),
-        InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl")
-    )
-    markup1.add(
+        InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl"),
         InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
-        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1")
-    )
-    markup1.add(
+        InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
     )
 
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
-    # Admin contact
     markup2 = InlineKeyboardMarkup()
-    markup2.add(
-        InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou")
-    )
-    bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက်ဆက်သွယ်ရန်", reply_markup=markup2)
+    markup2.add(InlineKeyboardButton("Admin Account", url="https://t.me/twentyfour7ithinkingaboutyou"))
+    bot.send_message(chat_id, "📢 ကြေငြာကိစ္စများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup2)
 
-    # Optional: welcome photo
     try:
-        photo_url = "https://i.imgur.com/Z6V7wZk.png"  # Replace with your own
+        photo_url = "https://i.imgur.com/Z6V7wZk.png"
         media_photo = InputMediaPhoto(photo_url, caption="Welcome to our channels!")
         bot.send_media_group(chat_id, [media_photo])
     except Exception as e:
         print("Photo send error:", e)
 
+
 # ============================
-# Keep-alive for Railway free dyno
+# Keep-alive for Railway Free Plan
 # ============================
 def keep_alive():
     while True:
         try:
-            url = os.environ.get("WEBHOOK_URL", "https://music-production-fecd.up.railway.app/")
-            requests.get(url)
-            print("🔄 Keep-alive ping sent")
-        except:
+            requests.get(APP_URL)
+        except Exception:
             pass
-        time.sleep(240)  # every 4 minutes
+
+        time.sleep(240)
+
 
 # ============================
-# Run App + Webhook
+# Run App + Webhook Setup
 # ============================
 if __name__ == "__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
-    print("✅ Webhook Set:", WEBHOOK_URL)
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=WEBHOOK_URL)
+        print("✅ Webhook set:", WEBHOOK_URL)
+    except Exception as e:
+        print("Webhook Set Error:", e)
 
     threading.Thread(target=keep_alive, daemon=True).start()
 
