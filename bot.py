@@ -147,24 +147,26 @@ def broadcast_start(message):
         bot.reply_to(message, "❌ သင့်မှာ permission မရှိပါ")
         return
 
-    msg = bot.reply_to(message, "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text only)၊\n📸 ပုံပါမယ်ဆိုရင် image လို့ပို့ပါ:")
+    msg = bot.reply_to(message, "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text, Photo, Video)၊\n📸 ပုံ/Video ပါမယ်ဆိုရင် ပို့ပါ:")
     bot.register_next_step_handler(msg, ask_for_media)
 
 def ask_for_media(message):
     """
-    Admin can send text or photo with caption
+    Admin can send text, photo, or video with caption
     """
     if message.content_type == "photo":
-        # photo + optional caption
         caption = message.caption if message.caption else ""
-        broadcast_photo(message.photo[-1].file_id, caption)
+        broadcast_photo(message.photo[-1].file_id, caption, message.from_user.id)
+    elif message.content_type == "video":
+        caption = message.caption if message.caption else ""
+        broadcast_video(message.video.file_id, caption, message.from_user.id)
     elif message.content_type == "text":
-        broadcast_text(message.text)
+        broadcast_text(message.text, message.from_user.id)
     else:
-        bot.reply_to(message, "❌ Unsupported content. Please send text or photo.")
+        bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
         return
 
-def broadcast_text(text):
+def broadcast_text(text, admin_id):
     targets = load_groups()
     success, failed = 0, 0
     for chat_id in targets:
@@ -174,9 +176,9 @@ def broadcast_text(text):
         except Exception as e:
             logging.warning("Failed to send to %s: %s", chat_id, e)
             failed += 1
-    bot.reply_to(message=None, text=f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
 
-def broadcast_photo(file_id, caption=""):
+def broadcast_photo(file_id, caption, admin_id):
     targets = load_groups()
     success, failed = 0, 0
     for chat_id in targets:
@@ -186,7 +188,19 @@ def broadcast_photo(file_id, caption=""):
         except Exception as e:
             logging.warning("Failed to send photo to %s: %s", chat_id, e)
             failed += 1
-    bot.reply_to(message=None, text=f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+
+def broadcast_video(file_id, caption, admin_id):
+    targets = load_groups()
+    success, failed = 0, 0
+    for chat_id in targets:
+        try:
+            bot.send_video(chat_id, file_id, caption=caption)
+            success += 1
+        except Exception as e:
+            logging.warning("Failed to send video to %s: %s", chat_id, e)
+            failed += 1
+    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
 
 # -----------------------------
 # Keep-Alive Thread
