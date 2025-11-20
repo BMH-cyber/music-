@@ -1,12 +1,5 @@
 pyTelegramBotAPI
-yt-dlp
-pillow
-requests
+telebot
 flask
-python-dotenv
-youtube_dl
-aiohttp
+requests
 gunicorn
-googlesearch-python
-youtube-search-python
-pytube
