@@ -1,12 +1,12 @@
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from flask import Flask, request
 import os
 import threading
 import time
 import requests
+from flask import Flask, request
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Load env variables
+# Load Environment Variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 APP_URL = os.getenv("APP_URL")
 PORT = int(os.getenv("PORT", 8080))
@@ -20,7 +20,7 @@ app = Flask(__name__)
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Home route
+# Home route (Uptime check)
 # -----------------------------
 @app.route("/", methods=["GET"])
 def home():
@@ -32,8 +32,8 @@ def home():
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        data = request.get_json(force=True)
-        update = telebot.types.Update.de_json(data)
+        json_data = request.get_json(force=True)
+        update = telebot.types.Update.de_json(json_data)
         bot.process_new_updates([update])
     except Exception as e:
         print("❌ Webhook Error:", e)
@@ -57,7 +57,7 @@ def start(message):
         InlineKeyboardButton("🍑 Hantai Channel", url="https://t.me/+LLM3G7OYBpQzOGZl"),
         InlineKeyboardButton("💬 Chat Group 1", url="https://t.me/+RqYCRdFavhM0NTc1"),
         InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
-        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl"),
+        InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
     )
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
@@ -74,7 +74,7 @@ def start(message):
         print("❌ Photo Error:", e)
 
 # -----------------------------
-# Keep-alive
+# Keep-alive thread (optional)
 # -----------------------------
 def keep_alive():
     while True:
@@ -82,19 +82,23 @@ def keep_alive():
             requests.get(APP_URL)
         except:
             pass
-        time.sleep(240)
+        time.sleep(240)  # every 4 min
 
 # -----------------------------
-# Start webhook + Flask
+# Set webhook before starting server
 # -----------------------------
-if __name__ == "__main__":
+def setup_webhook():
     try:
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=WEBHOOK_URL)
-        print("✅ Webhook Set:", WEBHOOK_URL)
+        print("✅ Webhook set:", WEBHOOK_URL)
     except Exception as e:
-        print("❌ Webhook Setup Error:", e)
+        print("❌ Webhook setup error:", e)
 
-    threading.Thread(target=keep_alive, daemon=True).start()
-    app.run(host="0.0.0.0", port=PORT)
+setup_webhook()
+threading.Thread(target=keep_alive, daemon=True).start()
+
+# -----------------------------
+# Run Flask app via Gunicorn (no app.run)
+# -----------------------------
