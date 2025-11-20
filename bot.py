@@ -27,7 +27,7 @@ if not BOT_TOKEN or not APP_URL:
     logging.error("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
     raise Exception("BOT_TOKEN or APP_URL is missing")
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="MarkdownV2")
 app = Flask(__name__)
 
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
@@ -58,6 +58,15 @@ def save_group(chat_id):
         logging.info(f"New group saved: {chat_id}")
 
 # -----------------------------
+# MarkdownV2 Escape Function
+# -----------------------------
+def escape_markdown(text):
+    escape_chars = r"_*[]()~`>#+-=|{}.!"
+    for char in escape_chars:
+        text = text.replace(char, f"\\{char}")
+    return text
+
+# -----------------------------
 # Home Route
 # -----------------------------
 @app.route("/", methods=["GET"])
@@ -83,14 +92,13 @@ def webhook():
 # -----------------------------
 # Send Welcome Function
 # -----------------------------
-def send_welcome(chat_id, name=""):
-    text = (
-        f"🌞 {name}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    ) if name else (
-        "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n"
-        "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
-    )
+def send_welcome(chat_id, mention_link=None):
+    if mention_link:
+        welcome_text = f"🌞 {mention_link}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n" \
+                       "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
+    else:
+        welcome_text = "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n" \
+                       "💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
 
     markup_channels = InlineKeyboardMarkup(row_width=2)
     markup_channels.add(
@@ -106,7 +114,7 @@ def send_welcome(chat_id, name=""):
     )
 
     try:
-        bot.send_message(chat_id, text, reply_markup=markup_channels)
+        bot.send_message(chat_id, welcome_text, parse_mode="MarkdownV2", reply_markup=markup_channels)
     except Exception as e:
         logging.error("❌ Error sending welcome channels: %s", e)
 
@@ -135,8 +143,22 @@ def start(message):
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
-        name = f"@{member.username}" if member.username else member.first_name
-        send_welcome(message.chat.id, name=name)
+        if getattr(member, "username", None):
+            mention_text = f"@{member.username}"
+        else:
+            names = []
+            if getattr(member, "first_name", None):
+                names.append(member.first_name)
+            if getattr(member, "last_name", None):
+                names.append(member.last_name)
+            if names:
+                mention_text = " ".join(names)
+            else:
+                mention_text = "User"
+
+        mention_text = escape_markdown(mention_text)
+        mention_link = f"[{mention_text}](tg://user?id={member.id})"
+        send_welcome(message.chat.id, mention_link=mention_link)
 
 # -----------------------------
 # /broadcast Command (Admin Only)
@@ -151,32 +173,36 @@ def broadcast_start(message):
     bot.register_next_step_handler(msg, ask_for_media)
 
 def ask_for_media(message):
-    """
-    Admin can send text, photo, or video with caption
-    """
-    if message.content_type == "photo":
-        caption = message.caption if message.caption else ""
-        broadcast_photo(message.photo[-1].file_id, caption, message.from_user.id)
-    elif message.content_type == "video":
-        caption = message.caption if message.caption else ""
-        broadcast_video(message.video.file_id, caption, message.from_user.id)
-    elif message.content_type == "text":
-        broadcast_text(message.text, message.from_user.id)
-    else:
-        bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
-        return
+    try:
+        if message.content_type == "photo":
+            caption = message.caption if message.caption else ""
+            broadcast_photo(message.photo[-1].file_id, caption, message.from_user.id)
+        elif message.content_type == "video":
+            caption = message.caption if message.caption else ""
+            broadcast_video(message.video.file_id, caption, message.from_user.id)
+        elif message.content_type == "text":
+            broadcast_text(message.text, message.from_user.id)
+        else:
+            bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
+    except Exception as e:
+        logging.error("Broadcast step failed: %s", e)
+        bot.reply_to(message, f"❌ Broadcast failed: {e}")
 
 def broadcast_text(text, admin_id):
     targets = load_groups()
     success, failed = 0, 0
     for chat_id in targets:
         try:
-            bot.send_message(chat_id, text)
+            bot.send_message(chat_id, text, parse_mode="MarkdownV2")
             success += 1
         except Exception as e:
             logging.warning("Failed to send to %s: %s", chat_id, e)
             failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    try:
+        report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+        threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
+    except Exception as e:
+        logging.error("Failed to send report to admin: %s", e)
 
 def broadcast_photo(file_id, caption, admin_id):
     targets = load_groups()
@@ -188,7 +214,11 @@ def broadcast_photo(file_id, caption, admin_id):
         except Exception as e:
             logging.warning("Failed to send photo to %s: %s", chat_id, e)
             failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    try:
+        report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+        threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
+    except Exception as e:
+        logging.error("Failed to send report to admin: %s", e)
 
 def broadcast_video(file_id, caption, admin_id):
     targets = load_groups()
@@ -200,7 +230,11 @@ def broadcast_video(file_id, caption, admin_id):
         except Exception as e:
             logging.warning("Failed to send video to %s: %s", chat_id, e)
             failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    try:
+        report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+        threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
+    except Exception as e:
+        logging.error("Failed to send report to admin: %s", e)
 
 # -----------------------------
 # Keep-Alive Thread
