@@ -6,7 +6,7 @@ import logging
 import json
 from flask import Flask, request
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 
 # -----------------------------
 # Logging Setup
@@ -114,7 +114,7 @@ def send_welcome(chat_id, mention_link=None):
     )
 
     try:
-        bot.send_message(chat_id, welcome_text, parse_mode="MarkdownV2", reply_markup=markup_channels)
+        bot.send_message(chat_id, welcome_text, reply_markup=markup_channels)
     except Exception as e:
         logging.error("❌ Error sending welcome channels: %s", e)
 
@@ -143,6 +143,7 @@ def start(message):
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
+        mention_text = None
         if getattr(member, "username", None):
             mention_text = f"@{member.username}"
         else:
@@ -153,88 +154,55 @@ def new_member_welcome(message):
                 names.append(member.last_name)
             if names:
                 mention_text = " ".join(names)
-            else:
-                mention_text = "User"
 
-        mention_text = escape_markdown(mention_text)
-        mention_link = f"[{mention_text}](tg://user?id={member.id})"
-        send_welcome(message.chat.id, mention_link=mention_link)
+        if mention_text:
+            mention_text = escape_markdown(mention_text)
+            mention_link = f"[{mention_text}](tg://user?id={member.id})"
+            send_welcome(message.chat.id, mention_link=mention_link)
+        else:
+            send_welcome(message.chat.id)  # no name to mention
 
 # -----------------------------
-# /broadcast Command (Admin Only)
+# /broadcast Command (Webhook Compatible)
 # -----------------------------
 @bot.message_handler(commands=["broadcast"])
 def broadcast_start(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ သင့်မှာ permission မရှိပါ")
         return
+    bot.send_message(
+        message.chat.id,
+        "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text / Photo / Video)",
+        reply_markup=ForceReply(selective=True)
+    )
 
-    msg = bot.reply_to(message, "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text, Photo, Video)၊\n📸 ပုံ/Video ပါမယ်ဆိုရင် ပို့ပါ:")
-    bot.register_next_step_handler(msg, ask_for_media)
+@bot.message_handler(func=lambda m: m.reply_to_message and "ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ" in m.reply_to_message.text)
+def broadcast_reply(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
 
-def ask_for_media(message):
+    targets = load_groups()
+
     try:
-        if message.content_type == "photo":
+        if message.content_type == "text":
+            text = message.text
+            for chat_id in targets:
+                try: bot.send_message(chat_id, text, parse_mode="MarkdownV2")
+                except: continue
+        elif message.content_type == "photo":
             caption = message.caption if message.caption else ""
-            broadcast_photo(message.photo[-1].file_id, caption, message.from_user.id)
+            for chat_id in targets:
+                try: bot.send_photo(chat_id, message.photo[-1].file_id, caption=caption)
+                except: continue
         elif message.content_type == "video":
             caption = message.caption if message.caption else ""
-            broadcast_video(message.video.file_id, caption, message.from_user.id)
-        elif message.content_type == "text":
-            broadcast_text(message.text, message.from_user.id)
-        else:
-            bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
+            for chat_id in targets:
+                try: bot.send_video(chat_id, message.video.file_id, caption=caption)
+                except: continue
+        bot.send_message(message.chat.id, "✅ ကြေငြာပြီးပါပြီ")
     except Exception as e:
-        logging.error("Broadcast step failed: %s", e)
-        bot.reply_to(message, f"❌ Broadcast failed: {e}")
-
-def broadcast_text(text, admin_id):
-    targets = load_groups()
-    success, failed = 0, 0
-    for chat_id in targets:
-        try:
-            bot.send_message(chat_id, text, parse_mode="MarkdownV2")
-            success += 1
-        except Exception as e:
-            logging.warning("Failed to send to %s: %s", chat_id, e)
-            failed += 1
-    try:
-        report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
-        threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
-    except Exception as e:
-        logging.error("Failed to send report to admin: %s", e)
-
-def broadcast_photo(file_id, caption, admin_id):
-    targets = load_groups()
-    success, failed = 0, 0
-    for chat_id in targets:
-        try:
-            bot.send_photo(chat_id, file_id, caption=caption)
-            success += 1
-        except Exception as e:
-            logging.warning("Failed to send photo to %s: %s", chat_id, e)
-            failed += 1
-    try:
-        report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
-        threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
-    except Exception as e:
-        logging.error("Failed to send report to admin: %s", e)
-
-def broadcast_video(file_id, caption, admin_id):
-    targets = load_groups()
-    success, failed = 0, 0
-    for chat_id in targets:
-        try:
-            bot.send_video(chat_id, file_id, caption=caption)
-            success += 1
-        except Exception as e:
-            logging.warning("Failed to send video to %s: %s", chat_id, e)
-            failed += 1
-    try:
-        report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
-        threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
-    except Exception as e:
-        logging.error("Failed to send report to admin: %s", e)
+        logging.error("Broadcast failed: %s", e)
+        bot.send_message(message.chat.id, f"❌ Broadcast failed: {e}")
 
 # -----------------------------
 # Keep-Alive Thread
