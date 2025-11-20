@@ -42,8 +42,8 @@ def webhook():
 # -----------------------------
 # Function to send welcome message with buttons
 # -----------------------------
-def send_welcome(chat_id):
-    text1 = "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
+def send_welcome(chat_id, name=""):
+    text1 = f"🌞 {name}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်" if name else "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
 
     markup1 = InlineKeyboardMarkup(row_width=2)
     markup1.add(
@@ -57,6 +57,7 @@ def send_welcome(chat_id):
         InlineKeyboardButton("💬 Chat Group 2", url="https://t.me/+qOU88Pm12pMzZGM1"),
         InlineKeyboardButton("📂 Dark 4u Folder", url="https://t.me/addlist/fRfr-seGpKs3MWFl")
     )
+
     bot.send_message(chat_id, text1, reply_markup=markup1)
 
     markup2 = InlineKeyboardMarkup()
@@ -73,12 +74,14 @@ def start(message):
     send_welcome(message.chat.id)
 
 # -----------------------------
-# New chat member auto welcome
+# New chat member auto welcome with username/first_name
 # -----------------------------
 @bot.message_handler(content_types=["new_chat_members"])
 def new_member_welcome(message):
     for member in message.new_chat_members:
-        send_welcome(message.chat.id)
+        # Username or first_name
+        name = f"@{member.username}" if member.username else member.first_name
+        send_welcome(message.chat.id, name=name)
 
 # -----------------------------
 # Keep-alive thread (optional)
@@ -106,4 +109,4 @@ def setup_webhook():
 setup_webhook()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# Flask app run via Gunicorn (no app.run)
+# Flask app run via Gunicorn (do NOT use app.run)
