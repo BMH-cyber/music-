@@ -171,6 +171,9 @@ def ask_for_media(message):
         bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
         return
 
+# -----------------------------
+# Broadcast functions with auto-delete report
+# -----------------------------
 def broadcast_text(text, admin_id):
     targets = load_groups()
     success, failed = 0, 0
@@ -181,7 +184,8 @@ def broadcast_text(text, admin_id):
         except Exception as e:
             logging.warning("Failed to send to %s: %s", chat_id, e)
             failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
 
 def broadcast_photo(file_id, caption, admin_id):
     targets = load_groups()
@@ -193,7 +197,8 @@ def broadcast_photo(file_id, caption, admin_id):
         except Exception as e:
             logging.warning("Failed to send photo to %s: %s", chat_id, e)
             failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
 
 def broadcast_video(file_id, caption, admin_id):
     targets = load_groups()
@@ -205,7 +210,8 @@ def broadcast_video(file_id, caption, admin_id):
         except Exception as e:
             logging.warning("Failed to send video to %s: %s", chat_id, e)
             failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    report = bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+    threading.Timer(10, lambda: bot.delete_message(admin_id, report.message_id)).start()
 
 # -----------------------------
 # Keep-Alive Thread
