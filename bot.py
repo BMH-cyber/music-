@@ -27,7 +27,7 @@ if not BOT_TOKEN or not APP_URL:
     logging.error("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
     raise Exception("BOT_TOKEN or APP_URL is missing")
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="MarkdownV2")
 app = Flask(__name__)
 
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
@@ -56,6 +56,15 @@ def save_group(chat_id):
         with open(GROUPS_FILE, "w") as f:
             json.dump(groups, f)
         logging.info(f"New group saved: {chat_id}")
+
+# -----------------------------
+# MarkdownV2 Escape Function
+# -----------------------------
+def escape_markdown(text):
+    escape_chars = r"_*[]()~`>#+-=|{}.!"
+    for char in escape_chars:
+        text = text.replace(char, f"\\{char}")
+    return text
 
 # -----------------------------
 # Home Route
@@ -105,7 +114,7 @@ def send_welcome(chat_id, mention_link=None):
     )
 
     try:
-        bot.send_message(chat_id, welcome_text, parse_mode="Markdown", reply_markup=markup_channels)
+        bot.send_message(chat_id, welcome_text, parse_mode="MarkdownV2", reply_markup=markup_channels)
     except Exception as e:
         logging.error("❌ Error sending welcome channels: %s", e)
 
@@ -134,10 +143,8 @@ def start(message):
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
-        # Username ရှိရင် @username
         if getattr(member, "username", None):
             mention_text = f"@{member.username}"
-        # username မရှိရင် first_name + last_name combine (သိရင်)
         else:
             names = []
             if getattr(member, "first_name", None):
@@ -147,10 +154,9 @@ def new_member_welcome(message):
             if names:
                 mention_text = " ".join(names)
             else:
-                # အမည်မရှိဘူးဆိုရင် id ဖြင့် mention
-                mention_text = f"User"
-        
-        # Clickable mention
+                mention_text = "User"
+
+        mention_text = escape_markdown(mention_text)
         mention_link = f"[{mention_text}](tg://user?id={member.id})"
         send_welcome(message.chat.id, mention_link=mention_link)
 
