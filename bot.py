@@ -23,19 +23,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 APP_URL = os.getenv("APP_URL")
 PORT = int(os.getenv("PORT", 8080))
 
-if not BOT_TOKEN or not APP_URL:
-    logging.error("❌ BOT_TOKEN or APP_URL is missing in Environment Variables")
-    raise Exception("BOT_TOKEN or APP_URL is missing")
-
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Admin ID
+# Admin IDs (multi-admin support)
 # -----------------------------
-ADMIN_IDS = [5720351176]  # Admin Telegram ID
+ADMIN_IDS = [5720351176, 6920736354]  # Add more IDs here
 
 # -----------------------------
 # Auto Join Groups Storage
@@ -56,6 +52,12 @@ def save_group(chat_id):
         with open(GROUPS_FILE, "w") as f:
             json.dump(groups, f)
         logging.info(f"New group saved: {chat_id}")
+
+# -----------------------------
+# Broadcast Settings
+# -----------------------------
+LAST_BROADCAST_MSG = None
+AUTO_PIN = False
 
 # -----------------------------
 # Home Route
@@ -122,6 +124,125 @@ def start(message):
     send_welcome(message.chat.id)
     save_group(message.chat.id)
 
+    if message.from_user.id in ADMIN_IDS:
+        show_admin_panel(message.chat.id)
+
+# -----------------------------
+# Admin Panel Menu
+# -----------------------------
+def show_admin_panel(chat_id):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📝 Broadcast Text", callback_data="admin:broadcast_text"),
+        InlineKeyboardButton("📸 Broadcast Photo", callback_data="admin:broadcast_photo"),
+        InlineKeyboardButton("🎥 Broadcast Video", callback_data="admin:broadcast_video"),
+        InlineKeyboardButton(f"📌 Auto-Pin: {'ON' if AUTO_PIN else 'OFF'}", callback_data="admin:toggle_pin")
+    )
+    bot.send_message(chat_id, "⚙️ Admin Panel - Main Menu", reply_markup=markup)
+
+# -----------------------------
+# Callback Handler
+# -----------------------------
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    if call.from_user.id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "❌ You are not admin", show_alert=True)
+        return
+
+    data = call.data
+
+    if data == "admin:toggle_pin":
+        global AUTO_PIN
+        AUTO_PIN = not AUTO_PIN
+        bot.answer_callback_query(call.id, f"Auto-Pin {'Enabled' if AUTO_PIN else 'Disabled'}")
+        show_admin_panel(call.message.chat.id)
+
+    elif data.startswith("admin:broadcast_"):
+        msg_type = data.split("_")[1]
+        bot.answer_callback_query(call.id, f"Send {msg_type} in next message")
+        bot.register_next_step_handler(call.message, lambda msg, t=msg_type: handle_broadcast_input(msg, t))
+
+# -----------------------------
+# Broadcast Handler
+# -----------------------------
+def handle_broadcast_input(message, msg_type):
+    if msg_type == "text":
+        _broadcast_text(message.text, message.from_user.id)
+    elif msg_type == "photo":
+        if message.content_type == "photo":
+            _broadcast_photo(message.photo[-1].file_id, message.caption or "", message.from_user.id)
+        else:
+            bot.reply_to(message, "❌ Please send a photo")
+    elif msg_type == "video":
+        if message.content_type == "video":
+            _broadcast_video(message.video.file_id, message.caption or "", message.from_user.id)
+        else:
+            bot.reply_to(message, "❌ Please send a video")
+
+# -----------------------------
+# Broadcast Functions
+# -----------------------------
+def _broadcast_text(text, admin_id):
+    global LAST_BROADCAST_MSG
+    groups = load_groups()
+    success, failed = 0, 0
+    for chat_id in groups:
+        try:
+            msg = bot.send_message(chat_id, text)
+            if AUTO_PIN:
+                try:
+                    bot.pin_chat_message(chat_id, msg.message_id)
+                except: pass
+            success += 1
+        except:
+            failed += 1
+
+    if LAST_BROADCAST_MSG:
+        try: bot.delete_message(admin_id, LAST_BROADCAST_MSG)
+        except: pass
+    sent = bot.send_message(admin_id, f"✅ Broadcast Completed: {success} success, {failed} failed")
+    LAST_BROADCAST_MSG = sent.message_id
+
+def _broadcast_photo(file_id, caption, admin_id):
+    global LAST_BROADCAST_MSG
+    groups = load_groups()
+    success, failed = 0, 0
+    for chat_id in groups:
+        try:
+            msg = bot.send_photo(chat_id, file_id, caption=caption)
+            if AUTO_PIN:
+                try: bot.pin_chat_message(chat_id, msg.message_id)
+                except: pass
+            success += 1
+        except:
+            failed += 1
+
+    if LAST_BROADCAST_MSG:
+        try: bot.delete_message(admin_id, LAST_BROADCAST_MSG)
+        except: pass
+    sent = bot.send_message(admin_id, f"✅ Broadcast Completed: {success} success, {failed} failed")
+    LAST_BROADCAST_MSG = sent.message_id
+
+def _broadcast_video(file_id, caption, admin_id):
+    global LAST_BROADCAST_MSG
+    groups = load_groups()
+    success, failed = 0, 0
+    for chat_id in groups:
+        try:
+            msg = bot.send_video(chat_id, file_id, caption=caption)
+            if AUTO_PIN:
+                try: bot.pin_chat_message(chat_id, msg.message_id)
+                except: pass
+            success += 1
+        except:
+            failed += 1
+
+    if LAST_BROADCAST_MSG:
+        try: bot.delete_message(admin_id, LAST_BROADCAST_MSG)
+        except: pass
+    sent = bot.send_message(admin_id, f"✅ Broadcast Completed: {success} success, {failed} failed")
+    LAST_BROADCAST_MSG = sent.message_id
+
 # -----------------------------
 # New Chat Member Welcome
 # -----------------------------
@@ -129,82 +250,10 @@ def start(message):
 def new_member_welcome(message):
     save_group(message.chat.id)
     for member in message.new_chat_members:
-        mention = None
-        if getattr(member, "username", None):
-            mention = f"@{member.username}"
-        elif getattr(member, "first_name", None):
-            mention = member.first_name
-        elif getattr(member, "last_name", None):
-            mention = member.last_name
-
-        send_welcome(message.chat.id, mention=mention)
-
-# -----------------------------
-# /broadcast Command (Text/Photo/Video)
-# -----------------------------
-@bot.message_handler(commands=["broadcast"])
-def broadcast(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ သင့်မှာ permission မရှိပါ")
-        return
-
-    # Text in same message
-    content = message.text.partition(" ")[2]
-    if content:
-        _broadcast_text(content, message.chat.id)
-        return
-
-    # Ask admin for media
-    msg = bot.reply_to(message, "📝 ကြေငြာမယ့်စာကိုရိုက်ထည့်ပါ (Text, Photo, Video)၊\n📸 ပုံ/Video ပါမယ်ဆိုရင် ပို့ပါ:")
-    bot.register_next_step_handler(msg, ask_for_media)
-
-def ask_for_media(message):
-    if message.content_type == "photo":
-        caption = message.caption if message.caption else ""
-        _broadcast_photo(message.photo[-1].file_id, caption, message.chat.id)
-    elif message.content_type == "video":
-        caption = message.caption if message.caption else ""
-        _broadcast_video(message.video.file_id, caption, message.chat.id)
-    elif message.content_type == "text":
-        _broadcast_text(message.text, message.chat.id)
-    else:
-        bot.reply_to(message, "❌ Unsupported content. Please send text, photo, or video.")
-
-def _broadcast_text(text, admin_id):
-    groups = load_groups()
-    success, failed = 0, 0
-    for chat_id in groups:
-        try:
-            bot.send_message(chat_id, text)
-            success += 1
-        except Exception as e:
-            logging.warning("Failed to send to %s: %s", chat_id, e)
-            failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
-
-def _broadcast_photo(file_id, caption, admin_id):
-    groups = load_groups()
-    success, failed = 0, 0
-    for chat_id in groups:
-        try:
-            bot.send_photo(chat_id, file_id, caption=caption)
-            success += 1
-        except Exception as e:
-            logging.warning("Failed to send photo to %s: %s", chat_id, e)
-            failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
-
-def _broadcast_video(file_id, caption, admin_id):
-    groups = load_groups()
-    success, failed = 0, 0
-    for chat_id in groups:
-        try:
-            bot.send_video(chat_id, file_id, caption=caption)
-            success += 1
-        except Exception as e:
-            logging.warning("Failed to send video to %s: %s", chat_id, e)
-            failed += 1
-    bot.send_message(admin_id, f"✅ ကြေငြာပြီးပါပြီ: {success} success, {failed} failed")
+        mention = getattr(member, "username", None)
+        if mention: mention = f"@{mention}"
+        else: mention = getattr(member, "first_name", None) or getattr(member, "last_name", "")
+        send_welcome(message.chat.id, mention)
 
 # -----------------------------
 # Keep-Alive Thread
@@ -212,10 +261,8 @@ def _broadcast_video(file_id, caption, admin_id):
 def keep_alive():
     while True:
         try:
-            resp = requests.get(APP_URL, timeout=10)
-            logging.info("Keep-alive ping response: %s", resp.status_code)
-        except Exception as e:
-            logging.warning("Keep-alive ping failed: %s", e)
+            requests.get(APP_URL, timeout=10)
+        except: pass
         time.sleep(240)
 
 # -----------------------------
@@ -226,7 +273,7 @@ def setup_webhook():
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=WEBHOOK_URL)
-        logging.info("✅ Webhook set: %s", WEBHOOK_URL)
+        logging.info("✅ Webhook set")
     except Exception as e:
         logging.error("❌ Webhook setup error: %s", e)
         raise
