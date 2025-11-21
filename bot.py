@@ -31,7 +31,7 @@ WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 # -----------------------------
 # Admin IDs (multi-admin support)
 # -----------------------------
-ADMIN_IDS = [5720351176, 6920736354]  # Add more IDs here
+ADMIN_IDS = [5720351176, 6920736354, 7906327556]  # Add more IDs here
 
 # -----------------------------
 # Auto Join Groups Storage
