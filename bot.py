@@ -11,7 +11,10 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # -----------------------------
 # Logging Setup
 # -----------------------------
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 # -----------------------------
 # Environment Variables
@@ -25,10 +28,17 @@ app = Flask(__name__)
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Admin & Groups
+# Admin IDs (multi-admin support)
 # -----------------------------
 ADMIN_IDS = [5720351176, 6920736354, 7906327556]
+
+# -----------------------------
+# Auto Join Groups Storage
+# -----------------------------
 GROUPS_FILE = "joined_groups.json"
+AUTO_PIN = False
+LAST_BROADCAST_MSG = None
+WIZARD_DATA = {}
 
 def load_groups():
     try:
@@ -44,13 +54,6 @@ def save_group(chat_id):
         with open(GROUPS_FILE, "w") as f:
             json.dump(groups, f)
         logging.info(f"New group saved: {chat_id}")
-
-# -----------------------------
-# Globals
-# -----------------------------
-AUTO_PIN = False
-LAST_BROADCAST_MSG = None
-WIZARD_DATA = {}
 
 # -----------------------------
 # Flask Routes
@@ -135,7 +138,6 @@ def callback_handler(call):
     if call.from_user.id not in ADMIN_IDS:
         bot.answer_callback_query(call.id, "❌ You are not admin", show_alert=True)
         return
-
     data = call.data
     if data == "admin:toggle_pin":
         global AUTO_PIN
@@ -144,58 +146,49 @@ def callback_handler(call):
         show_admin_panel(call.message.chat.id)
     elif data == "admin:multi_broadcast":
         bot.answer_callback_query(call.id)
-        start_wizard(call.message)
+        admin_id = call.from_user.id
+        msg = bot.send_message(admin_id, "📝 Step 1: Send text (or type 'skip')")
+        bot.register_next_step_handler(msg, wizard_step_text)
 
 # -----------------------------
-# Multi Broadcast Wizard
+# Wizard Steps
 # -----------------------------
-def start_wizard(message):
-    admin_id = message.from_user.id
-    WIZARD_DATA[admin_id] = {"text": "", "media": [], "buttons": []}
-    bot.send_message(admin_id, "📝 Step 1: Send text (or type 'skip')")
-    bot.register_next_step_handler(message, wizard_step_text)
-
 def wizard_step_text(message):
     admin_id = message.from_user.id
-    if message.content_type == "text" and message.text.lower() != "skip":
+    WIZARD_DATA[admin_id] = {"text": "", "media": [], "buttons": []}
+    if message.content_type=="text" and message.text.lower() != "skip":
         WIZARD_DATA[admin_id]["text"] = message.text
-    bot.send_message(admin_id, "📸 Step 2: Send photos/videos/documents. Type 'done' when finished")
-    bot.register_next_step_handler(message, wizard_step_media)
+    msg = bot.send_message(admin_id, "📸 Step 2: Send photos/videos/documents. Type 'done' when finished")
+    bot.register_next_step_handler(msg, wizard_step_media)
 
 def wizard_step_media(message):
     admin_id = message.from_user.id
     data = WIZARD_DATA[admin_id]
-
-    if message.content_type == "text" and message.text.lower() == "done":
-        bot.send_message(admin_id, "🔗 Step 3: Add buttons (optional). Format: Text | URL. Type 'done' when finished")
-        bot.register_next_step_handler(message, wizard_step_buttons)
+    if message.content_type=="text" and message.text.lower()=="done":
+        msg = bot.send_message(admin_id,"🔗 Step 3: Add buttons (Text | URL). Type 'done' when finished")
+        bot.register_next_step_handler(msg, wizard_step_buttons)
         return
-
-    if message.content_type == "photo":
+    if message.content_type=="photo":
         data["media"].append({"type":"photo","file_id":message.photo[-1].file_id,"caption":message.caption or ""})
-    elif message.content_type == "video":
+    elif message.content_type=="video":
         data["media"].append({"type":"video","file_id":message.video.file_id,"caption":message.caption or ""})
-    elif message.content_type == "document":
+    elif message.content_type=="document":
         data["media"].append({"type":"document","file_id":message.document.file_id,"caption":message.caption or ""})
     else:
         bot.reply_to(message,"❌ Send photo/video/document or type 'done'")
-
     bot.register_next_step_handler(message, wizard_step_media)
 
 def wizard_step_buttons(message):
     admin_id = message.from_user.id
     data = WIZARD_DATA[admin_id]
-
     if message.content_type=="text" and message.text.lower()=="done":
         preview_and_send(admin_id)
         return
-
     if message.content_type=="text" and "|" in message.text:
         text,url=map(str.strip,message.text.split("|",1))
         data["buttons"].append({"text":text,"url":url})
     else:
         bot.reply_to(message,"❌ Invalid format. Use: Text | URL or type 'done'")
-
     bot.register_next_step_handler(message, wizard_step_buttons)
 
 def preview_and_send(admin_id):
@@ -205,13 +198,11 @@ def preview_and_send(admin_id):
         markup=InlineKeyboardMarkup()
         for btn in data["buttons"]:
             markup.add(InlineKeyboardButton(btn["text"],url=btn["url"]))
-
-    preview_text=data.get("text") or "📎 Media Only Message"
+    preview_text = data.get("text") or "📎 Media Only Message"
     bot.send_message(admin_id,f"✅ Preview:\n{preview_text}",reply_markup=markup)
 
     groups=load_groups()
     success,failed=0,0
-
     for chat_id in groups:
         try:
             if data.get("text"):
@@ -239,7 +230,6 @@ def preview_and_send(admin_id):
         except Exception as e:
             logging.error(f"Failed {chat_id}: {e}")
             failed+=1
-
     bot.send_message(admin_id,f"✅ Broadcast Done: {success} success, {failed} failed")
     WIZARD_DATA.pop(admin_id,None)
 
