@@ -153,25 +153,26 @@ def callback_handler(call):
 
     elif data == "admin:broadcast_wizard":
         bot.answer_callback_query(call.id)
-        msg = bot.send_message(user_id, "📝 Send your broadcast message. For buttons use `Button Name | URL`. Media (photo/video/document) also supported. When done, type 'send'")
+        # Initialize admin broadcast session
+        BROADCAST_DATA[user_id] = {"text": None, "media": [], "buttons": []}
+        msg = bot.send_message(user_id, "📝 Send your broadcast message.\n- Text\n- Media (photo/video/document)\n- Buttons: `Name | URL`\nWhen done, type 'send'")
+        # Step handler: content_types full list
         bot.register_next_step_handler(msg, broadcast_wizard_step)
 
     elif data == "confirm_broadcast":
         broadcast_message(user_id)
 
 # -----------------------------
-# Broadcast Wizard
+# Broadcast Wizard (Step-Free)
 # -----------------------------
 def broadcast_wizard_step(message):
     user_id = message.from_user.id
     if user_id not in BROADCAST_DATA:
         BROADCAST_DATA[user_id] = {"text": None, "media": [], "buttons": []}
-
     data = BROADCAST_DATA[user_id]
 
     if message.content_type == "text":
-        text = message.text
-        if text.lower() == "send":
+        if message.text.lower() == "send":
             # Preview + Confirm
             markup = None
             if data["buttons"]:
@@ -187,12 +188,12 @@ def broadcast_wizard_step(message):
             bot.send_message(user_id, "Press below to broadcast to all groups", reply_markup=confirm_markup)
             return
 
-        # Check for button format
-        if "|" in text:
-            name, url = map(str.strip, text.split("|", 1))
+        # Button check
+        if "|" in message.text:
+            name, url = map(str.strip, message.text.split("|", 1))
             data["buttons"].append({"text": name, "url": url})
         else:
-            data["text"] = text
+            data["text"] = message.text
 
     elif message.content_type == "photo":
         data["media"].append({"type":"photo","file_id":message.photo[-1].file_id,"caption":message.caption or ""})
@@ -203,6 +204,7 @@ def broadcast_wizard_step(message):
     else:
         bot.reply_to(message, "❌ Unsupported type")
 
+    # Keep listening for next message
     bot.register_next_step_handler(message, broadcast_wizard_step)
 
 # -----------------------------
@@ -248,7 +250,6 @@ def broadcast_message(admin_id):
                             try: bot.pin_chat_message(chat_id,msg.message_id)
                             except: pass
 
-                # Send media group if exists
                 if group:
                     bot.send_media_group(chat_id, group)
 
