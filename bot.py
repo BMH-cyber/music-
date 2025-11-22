@@ -6,7 +6,7 @@ import logging
 import json
 from flask import Flask, request
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # -----------------------------
 # Logging Setup
@@ -25,19 +25,18 @@ PORT = int(os.getenv("PORT", 8080))
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
+
 WEBHOOK_URL = f"{APP_URL}/{BOT_TOKEN}"
 
 # -----------------------------
-# Admin IDs
+# Admin IDs (multi-admin support)
 # -----------------------------
-ADMIN_IDS = [5720351176, 6920736354, 7906327556]
+ADMIN_IDS = [5720351176, 6920736354, 7906327556]  # Add more IDs here
 
 # -----------------------------
-# Groups Storage
+# Auto Join Groups Storage
 # -----------------------------
 GROUPS_FILE = "joined_groups.json"
-AUTO_PIN = False
-BROADCAST_DATA = {}  # Admin id -> broadcast data
 
 def load_groups():
     try:
@@ -55,12 +54,26 @@ def save_group(chat_id):
         logging.info(f"New group saved: {chat_id}")
 
 # -----------------------------
-# Flask Routes
+# Broadcast Settings
+# -----------------------------
+LAST_BROADCAST_MSG = None
+AUTO_PIN = False
+
+# -----------------------------
+# Wizard State Storage
+# -----------------------------
+WIZARD_DATA = {}  # {admin_id: {"text": "", "media": [], "buttons": []}}
+
+# -----------------------------
+# Home Route
 # -----------------------------
 @app.route("/", methods=["GET"])
 def home():
     return "✅ Telegram Bot is running!"
 
+# -----------------------------
+# Webhook Route
+# -----------------------------
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
@@ -71,11 +84,11 @@ def webhook():
         else:
             logging.warning("Webhook received empty JSON")
     except Exception as e:
-        logging.error(f"Webhook processing error: {e}")
+        logging.error("❌ Webhook processing error: %s", e)
     return "OK", 200
 
 # -----------------------------
-# Send Welcome
+# Send Welcome Function
 # -----------------------------
 def send_welcome(chat_id, mention=None):
     text = f"🌞 {mention}, သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်" if mention else "🌞 သာယာသောနေ့လေးဖြစ်ပါစေ 🥰\n💖 ချန်နယ်ဝင်ပေးတဲ့တစ်ယောက်ချင်းစီကို ကျေးဇူးအထူးတင်ပါတယ်"
@@ -96,7 +109,7 @@ def send_welcome(chat_id, mention=None):
     try:
         bot.send_message(chat_id, text, reply_markup=markup_channels)
     except Exception as e:
-        logging.error(f"❌ Error sending welcome channels: {e}")
+        logging.error("❌ Error sending welcome channels: %s", e)
 
     markup_admin = InlineKeyboardMarkup()
     markup_admin.add(
@@ -106,44 +119,43 @@ def send_welcome(chat_id, mention=None):
     try:
         bot.send_message(chat_id, "📢 ကြေငြာများအတွက် ဆက်သွယ်ရန်👇", reply_markup=markup_admin)
     except Exception as e:
-        logging.error(f"❌ Error sending admin contact: {e}")
+        logging.error("❌ Error sending admin contact: %s", e)
 
 # -----------------------------
-# Admin Panel
-# -----------------------------
-def show_admin_panel(chat_id):
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton(f"📌 Auto-Pin: {'ON' if AUTO_PIN else 'OFF'}", callback_data="admin:toggle_pin"),
-        InlineKeyboardButton("🖋 Broadcast Wizard", callback_data="admin:broadcast_wizard")
-    )
-    bot.send_message(chat_id, "⚙️ Admin Panel - Main Menu", reply_markup=markup)
-
-# -----------------------------
-# /start
+# /start Command
 # -----------------------------
 @bot.message_handler(commands=["start"])
 def start(message):
     send_welcome(message.chat.id)
     save_group(message.chat.id)
+
     if message.from_user.id in ADMIN_IDS:
-        try:
-            show_admin_panel(message.chat.id)
-        except Exception as e:
-            logging.error(f"Admin panel error: {e}")
-            bot.send_message(message.chat.id, "⚠️ Admin panel error, check logs")
+        show_admin_panel(message.chat.id)
+
+# -----------------------------
+# Admin Panel Menu
+# -----------------------------
+def show_admin_panel(chat_id):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📝 Broadcast Text", callback_data="admin:broadcast_text"),
+        InlineKeyboardButton("📸 Broadcast Photo", callback_data="admin:broadcast_photo"),
+        InlineKeyboardButton("🎥 Broadcast Video", callback_data="admin:broadcast_video"),
+        InlineKeyboardButton("🖋 Multi Broadcast Wizard", callback_data="admin:multi_broadcast"),
+        InlineKeyboardButton(f"📌 Auto-Pin: {'ON' if AUTO_PIN else 'OFF'}", callback_data="admin:toggle_pin")
+    )
+    bot.send_message(chat_id, "⚙️ Admin Panel - Main Menu", reply_markup=markup)
 
 # -----------------------------
 # Callback Handler
 # -----------------------------
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    user_id = call.from_user.id
-    data = call.data
-
-    if user_id not in ADMIN_IDS:
+    if call.from_user.id not in ADMIN_IDS:
         bot.answer_callback_query(call.id, "❌ You are not admin", show_alert=True)
         return
+
+    data = call.data
 
     if data == "admin:toggle_pin":
         global AUTO_PIN
@@ -151,113 +163,92 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, f"Auto-Pin {'Enabled' if AUTO_PIN else 'Disabled'}")
         show_admin_panel(call.message.chat.id)
 
-    elif data == "admin:broadcast_wizard":
+    elif data.startswith("admin:broadcast_"):
+        msg_type = data.split("_")[1]
+        bot.answer_callback_query(call.id, f"Send {msg_type} in next message")
+        bot.register_next_step_handler(call.message, lambda msg, t=msg_type: handle_broadcast_input(msg, t))
+
+    elif data == "admin:multi_broadcast":
         bot.answer_callback_query(call.id)
-        # Initialize admin broadcast session
-        BROADCAST_DATA[user_id] = {"text": None, "media": [], "buttons": []}
-        msg = bot.send_message(user_id, "📝 Send your broadcast message.\n- Text\n- Media (photo/video/document)\n- Buttons: `Name | URL`\nWhen done, type 'send'")
-        # Step handler: content_types full list
-        bot.register_next_step_handler(msg, broadcast_wizard_step)
-
-    elif data == "confirm_broadcast":
-        broadcast_message(user_id)
+        start_wizard(call.message)
 
 # -----------------------------
-# Broadcast Wizard (Step-Free)
+# Broadcast Handler (single type)
 # -----------------------------
-@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS, content_types=["text","photo","video","document"])
-def broadcast_wizard_step(message):
-    user_id = message.from_user.id
-    if user_id not in BROADCAST_DATA:
-        BROADCAST_DATA[user_id] = {"text": None, "media": [], "buttons": []}
-    data = BROADCAST_DATA[user_id]
-
-    if message.content_type == "text":
-        if message.text.lower() == "send":
-            # Preview + Confirm
-            markup = None
-            if data["buttons"]:
-                markup = InlineKeyboardMarkup()
-                for btn in data["buttons"]:
-                    markup.add(InlineKeyboardButton(btn["text"], url=btn["url"]))
-
-            preview_text = data.get("text") or "📎 Media/Link Only Message"
-            bot.send_message(user_id, f"✅ Preview:\n{preview_text}", reply_markup=markup)
-
-            confirm_markup = InlineKeyboardMarkup()
-            confirm_markup.add(InlineKeyboardButton("🚀 Send Broadcast", callback_data="confirm_broadcast"))
-            bot.send_message(user_id, "Press below to broadcast to all groups", reply_markup=confirm_markup)
-            return
-
-        # Button check
-        if "|" in message.text:
-            name, url = map(str.strip, message.text.split("|", 1))
-            data["buttons"].append({"text": name, "url": url})
+def handle_broadcast_input(message, msg_type):
+    if msg_type == "text":
+        _broadcast_text(message.text, message.from_user.id)
+    elif msg_type == "photo":
+        if message.content_type == "photo":
+            _broadcast_photo(message.photo[-1].file_id, message.caption or "", message.from_user.id)
         else:
-            data["text"] = message.text
-
-    elif message.content_type == "photo":
-        data["media"].append({"type":"photo","file_id":message.photo[-1].file_id,"caption":message.caption or ""})
-    elif message.content_type == "video":
-        data["media"].append({"type":"video","file_id":message.video.file_id,"caption":message.caption or ""})
-    elif message.content_type == "document":
-        data["media"].append({"type":"document","file_id":message.document.file_id,"caption":message.caption or ""})
-    else:
-        bot.reply_to(message, "❌ Unsupported type")
+            bot.reply_to(message, "❌ Please send a photo")
+    elif msg_type == "video":
+        if message.content_type == "video":
+            _broadcast_video(message.video.file_id, message.caption or "", message.from_user.id)
+        else:
+            bot.reply_to(message, "❌ Please send a video")
 
 # -----------------------------
-# Broadcast Function (Multi-Media)
+# Broadcast Functions
 # -----------------------------
-def broadcast_message(admin_id):
-    if admin_id not in BROADCAST_DATA:
-        bot.send_message(admin_id,"❌ No broadcast data")
-        return
-
-    data = BROADCAST_DATA[admin_id]
+def _broadcast_text(text, admin_id):
+    global LAST_BROADCAST_MSG
     groups = load_groups()
-    success, failed = 0,0
-
-    markup = None
-    if data["buttons"]:
-        markup = InlineKeyboardMarkup()
-        for btn in data["buttons"]:
-            markup.add(InlineKeyboardButton(btn["text"], url=btn["url"]))
-
+    success, failed = 0, 0
     for chat_id in groups:
         try:
-            # Send text first
-            if data.get("text"):
-                msg = bot.send_message(chat_id, data["text"], reply_markup=markup)
-                if AUTO_PIN:
-                    try: bot.pin_chat_message(chat_id,msg.message_id)
-                    except: pass
-
-            # Send media
-            media_list = data.get("media", [])
-            if media_list:
-                group = []
-                for m in media_list:
-                    if m["type"]=="photo":
-                        group.append(InputMediaPhoto(m["file_id"], caption=m.get("caption","")))
-                    elif m["type"]=="video":
-                        group.append(InputMediaVideo(m["file_id"], caption=m.get("caption","")))
-                    else:
-                        # document: send separately
-                        msg = bot.send_document(chat_id, m["file_id"], caption=m.get("caption",""))
-                        if AUTO_PIN:
-                            try: bot.pin_chat_message(chat_id,msg.message_id)
-                            except: pass
-
-                if group:
-                    bot.send_media_group(chat_id, group)
-
+            msg = bot.send_message(chat_id, text)
+            if AUTO_PIN:
+                try:
+                    bot.pin_chat_message(chat_id, msg.message_id)
+                except: pass
             success += 1
-        except Exception as e:
-            logging.error(f"Failed to send to {chat_id}: {e}")
+        except:
             failed += 1
+    if LAST_BROADCAST_MSG:
+        try: bot.delete_message(admin_id, LAST_BROADCAST_MSG)
+        except: pass
+    sent = bot.send_message(admin_id, f"✅ Broadcast Completed: {success} success, {failed} failed")
+    LAST_BROADCAST_MSG = sent.message_id
 
-    bot.send_message(admin_id,f"✅ Broadcast Done: {success} success, {failed} failed")
-    BROADCAST_DATA.pop(admin_id,None)
+def _broadcast_photo(file_id, caption, admin_id):
+    global LAST_BROADCAST_MSG
+    groups = load_groups()
+    success, failed = 0, 0
+    for chat_id in groups:
+        try:
+            msg = bot.send_photo(chat_id, file_id, caption=caption)
+            if AUTO_PIN:
+                try: bot.pin_chat_message(chat_id, msg.message_id)
+                except: pass
+            success += 1
+        except:
+            failed += 1
+    if LAST_BROADCAST_MSG:
+        try: bot.delete_message(admin_id, LAST_BROADCAST_MSG)
+        except: pass
+    sent = bot.send_message(admin_id, f"✅ Broadcast Completed: {success} success, {failed} failed")
+    LAST_BROADCAST_MSG = sent.message_id
+
+def _broadcast_video(file_id, caption, admin_id):
+    global LAST_BROADCAST_MSG
+    groups = load_groups()
+    success, failed = 0, 0
+    for chat_id in groups:
+        try:
+            msg = bot.send_video(chat_id, file_id, caption=caption)
+            if AUTO_PIN:
+                try: bot.pin_chat_message(chat_id, msg.message_id)
+                except: pass
+            success += 1
+        except:
+            failed += 1
+    if LAST_BROADCAST_MSG:
+        try: bot.delete_message(admin_id, LAST_BROADCAST_MSG)
+        except: pass
+    sent = bot.send_message(admin_id, f"✅ Broadcast Completed: {success} success, {failed} failed")
+    LAST_BROADCAST_MSG = sent.message_id
 
 # -----------------------------
 # New Chat Member Welcome
@@ -272,7 +263,101 @@ def new_member_welcome(message):
         send_welcome(message.chat.id, mention)
 
 # -----------------------------
-# Keep Alive
+# Multi Broadcast Wizard Steps
+# -----------------------------
+def start_wizard(message):
+    admin_id = message.from_user.id
+    WIZARD_DATA[admin_id] = {"text": "", "media": [], "buttons": []}
+    bot.send_message(admin_id, "📝 Step 1: Send your text message (or type 'skip')")
+    bot.register_next_step_handler(message, wizard_step_text)
+
+def wizard_step_text(message):
+    admin_id = message.from_user.id
+    if message.text.lower() != "skip":
+        WIZARD_DATA[admin_id]["text"] = message.text
+    bot.send_message(admin_id, "📸 Step 2: Send photos/videos one by one. Type 'done' when finished.")
+    bot.register_next_step_handler(message, wizard_step_media)
+
+def wizard_step_media(message):
+    admin_id = message.from_user.id
+    data = WIZARD_DATA[admin_id]
+
+    if message.text and message.text.lower() == "done":
+        bot.send_message(admin_id, "🔗 Step 3: Add buttons. Format: Button Text | URL. Type 'done' when finished.")
+        bot.register_next_step_handler(message, wizard_step_buttons)
+        return
+
+    if message.content_type == "photo":
+        data["media"].append({"type": "photo", "file_id": message.photo[-1].file_id, "caption": message.caption or ""})
+    elif message.content_type == "video":
+        data["media"].append({"type": "video", "file_id": message.video.file_id, "caption": message.caption or ""})
+    else:
+        bot.reply_to(message, "❌ Please send photo or video, or type 'done'")
+
+    bot.register_next_step_handler(message, wizard_step_media)
+
+def wizard_step_buttons(message):
+    admin_id = message.from_user.id
+    data = WIZARD_DATA[admin_id]
+
+    if message.text.lower() == "done":
+        preview_and_send(admin_id)
+        return
+
+    if "|" in message.text:
+        text, url = map(str.strip, message.text.split("|", 1))
+        data["buttons"].append({"text": text, "url": url})
+    else:
+        bot.reply_to(message, "❌ Invalid format. Use: Button Text | URL")
+
+    bot.register_next_step_handler(message, wizard_step_buttons)
+
+def preview_and_send(admin_id):
+    data = WIZARD_DATA[admin_id]
+    markup = None
+    if data["buttons"]:
+        markup = InlineKeyboardMarkup()
+        for btn in data["buttons"]:
+            markup.add(InlineKeyboardButton(btn["text"], url=btn["url"]))
+
+    preview_text = data.get("text") or "📎 Media Only Message"
+    bot.send_message(admin_id, f"✅ Preview:\n{preview_text}", reply_markup=markup)
+
+    groups = load_groups()
+    success, failed = 0, 0
+
+    for chat_id in groups:
+        try:
+            # Send text
+            if data.get("text"):
+                msg = bot.send_message(chat_id, data["text"], reply_markup=markup)
+                if AUTO_PIN:
+                    try: bot.pin_chat_message(chat_id, msg.message_id)
+                    except: pass
+
+            # Send media
+            for m in data["media"]:
+                if m["type"] == "photo":
+                    msg = bot.send_photo(chat_id, m["file_id"], caption=m.get("caption", ""))
+                    if AUTO_PIN:
+                        try: bot.pin_chat_message(chat_id, msg.message_id)
+                        except: pass
+                elif m["type"] == "video":
+                    msg = bot.send_video(chat_id, m["file_id"], caption=m.get("caption", ""))
+                    if AUTO_PIN:
+                        try: bot.pin_chat_message(chat_id, msg.message_id)
+                        except: pass
+
+            success += 1
+        except Exception as e:
+            logging.error(f"Failed to send to {chat_id}: {e}")
+            failed += 1
+
+    bot.send_message(admin_id, f"✅ Broadcast Done: {success} success, {failed} failed")
+    WIZARD_DATA.pop(admin_id, None)
+
+# -----------------------------
+# Keep-Alive Thread
 # -----------------------------
 def keep_alive():
     while True:
@@ -291,7 +376,7 @@ def setup_webhook():
         bot.set_webhook(url=WEBHOOK_URL)
         logging.info("✅ Webhook set")
     except Exception as e:
-        logging.error(f"❌ Webhook setup error: {e}")
+        logging.error("❌ Webhook setup error: %s", e)
         raise
 
 # -----------------------------
