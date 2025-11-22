@@ -109,15 +109,7 @@ def send_welcome(chat_id, mention=None):
         logging.error(f"❌ Error sending admin contact: {e}")
 
 # -----------------------------
-# /start Command
-# -----------------------------
-@bot.message_handler(commands=["start"])
-def start(message):
-    send_welcome(message.chat.id)
-    save_group(message.chat.id)
-
-# -----------------------------
-# Admin Panel Menu
+# Admin Panel
 # -----------------------------
 def show_admin_panel(chat_id):
     markup = InlineKeyboardMarkup(row_width=2)
@@ -127,11 +119,26 @@ def show_admin_panel(chat_id):
     bot.send_message(chat_id, "⚙️ Admin Panel - Main Menu", reply_markup=markup)
 
 # -----------------------------
+# /start Command
+# -----------------------------
+@bot.message_handler(commands=["start"])
+def start(message):
+    send_welcome(message.chat.id)
+    save_group(message.chat.id)
+    # Auto-show Admin Panel for admins
+    if message.from_user.id in ADMIN_IDS:
+        try:
+            show_admin_panel(message.chat.id)
+        except Exception as e:
+            logging.error(f"Admin panel error: {e}")
+            bot.send_message(message.chat.id, "⚠️ Admin panel error, check logs")
+
+# -----------------------------
 # Callback Handler
 # -----------------------------
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    if call.from_user.id not in ADMIN_IDS:
+    if call.from_user.id not in ADMIN_IDS and call.data != "confirm_broadcast":
         bot.answer_callback_query(call.id, "❌ You are not admin", show_alert=True)
         return
 
