@@ -169,7 +169,7 @@ def callback_handler(call):
         bot.register_next_step_handler(call.message, lambda msg, t=msg_type: handle_broadcast_input(msg, t))
 
     elif data == "admin:multi_broadcast":
-        bot.answer_callback_query(call.id)
+        bot.answer_callback_query(call.id, "📝 Multi Broadcast Wizard started!")
         start_wizard(call.message)
 
 # -----------------------------
@@ -200,8 +200,7 @@ def _broadcast_text(text, admin_id):
         try:
             msg = bot.send_message(chat_id, text)
             if AUTO_PIN:
-                try:
-                    bot.pin_chat_message(chat_id, msg.message_id)
+                try: bot.pin_chat_message(chat_id, msg.message_id)
                 except: pass
             success += 1
         except:
@@ -268,74 +267,69 @@ def new_member_welcome(message):
 def start_wizard(message):
     admin_id = message.from_user.id
     WIZARD_DATA[admin_id] = {"text": "", "media": [], "buttons": []}
-    bot.send_message(admin_id, "📝 Step 1: Send your text message (or type 'skip')")
-    bot.register_next_step_handler(message, wizard_step_text)
+    msg = bot.send_message(admin_id, "📝 Step 1: Send your text message (or type 'skip')")
+    bot.register_next_step_handler(msg, wizard_step_text)
 
 def wizard_step_text(message):
     admin_id = message.from_user.id
-    if message.text.lower() != "skip":
+    if message.text and message.text.lower() != "skip":
         WIZARD_DATA[admin_id]["text"] = message.text
-    bot.send_message(admin_id, "📸 Step 2: Send photos/videos one by one. Type 'done' when finished.")
-    bot.register_next_step_handler(message, wizard_step_media)
+    msg = bot.send_message(admin_id, "📸 Step 2: Send photos/videos one by one. Type 'done' when finished.")
+    bot.register_next_step_handler(msg, wizard_step_media)
 
 def wizard_step_media(message):
     admin_id = message.from_user.id
-    data = WIZARD_DATA[admin_id]
-
-    if message.text and message.text.lower() == "done":
-        bot.send_message(admin_id, "🔗 Step 3: Add buttons. Format: Button Text | URL. Type 'done' when finished.")
-        bot.register_next_step_handler(message, wizard_step_buttons)
+    data = WIZARD_DATA.get(admin_id)
+    if not data:
         return
-
+    if message.text and message.text.lower() == "done":
+        msg = bot.send_message(admin_id, "🔗 Step 3: Add buttons. Format: Button Text | URL. Type 'done' when finished.")
+        bot.register_next_step_handler(msg, wizard_step_buttons)
+        return
     if message.content_type == "photo":
         data["media"].append({"type": "photo", "file_id": message.photo[-1].file_id, "caption": message.caption or ""})
     elif message.content_type == "video":
         data["media"].append({"type": "video", "file_id": message.video.file_id, "caption": message.caption or ""})
     else:
-        bot.reply_to(message, "❌ Please send photo or video, or type 'done'")
-
+        bot.reply_to(message, "❌ Send a photo/video or type 'done'.")
     bot.register_next_step_handler(message, wizard_step_media)
 
 def wizard_step_buttons(message):
     admin_id = message.from_user.id
-    data = WIZARD_DATA[admin_id]
-
-    if message.text.lower() == "done":
+    data = WIZARD_DATA.get(admin_id)
+    if not data:
+        return
+    if message.text and message.text.lower() == "done":
         preview_and_send(admin_id)
         return
-
-    if "|" in message.text:
+    if message.text and "|" in message.text:
         text, url = map(str.strip, message.text.split("|", 1))
         data["buttons"].append({"text": text, "url": url})
     else:
         bot.reply_to(message, "❌ Invalid format. Use: Button Text | URL")
-
     bot.register_next_step_handler(message, wizard_step_buttons)
 
 def preview_and_send(admin_id):
-    data = WIZARD_DATA[admin_id]
+    data = WIZARD_DATA.get(admin_id)
+    if not data:
+        return
     markup = None
     if data["buttons"]:
         markup = InlineKeyboardMarkup()
         for btn in data["buttons"]:
             markup.add(InlineKeyboardButton(btn["text"], url=btn["url"]))
-
     preview_text = data.get("text") or "📎 Media Only Message"
     bot.send_message(admin_id, f"✅ Preview:\n{preview_text}", reply_markup=markup)
 
     groups = load_groups()
     success, failed = 0, 0
-
     for chat_id in groups:
         try:
-            # Send text
             if data.get("text"):
                 msg = bot.send_message(chat_id, data["text"], reply_markup=markup)
                 if AUTO_PIN:
                     try: bot.pin_chat_message(chat_id, msg.message_id)
                     except: pass
-
-            # Send media
             for m in data["media"]:
                 if m["type"] == "photo":
                     msg = bot.send_photo(chat_id, m["file_id"], caption=m.get("caption", ""))
@@ -347,12 +341,10 @@ def preview_and_send(admin_id):
                     if AUTO_PIN:
                         try: bot.pin_chat_message(chat_id, msg.message_id)
                         except: pass
-
             success += 1
         except Exception as e:
             logging.error(f"Failed to send to {chat_id}: {e}")
             failed += 1
-
     bot.send_message(admin_id, f"✅ Broadcast Done: {success} success, {failed} failed")
     WIZARD_DATA.pop(admin_id, None)
 
@@ -363,7 +355,8 @@ def keep_alive():
     while True:
         try:
             requests.get(APP_URL, timeout=10)
-        except: pass
+        except:
+            pass
         time.sleep(240)
 
 # -----------------------------
