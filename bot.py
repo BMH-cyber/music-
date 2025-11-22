@@ -165,6 +165,7 @@ def callback_handler(call):
 # -----------------------------
 # Broadcast Wizard (Step-Free)
 # -----------------------------
+@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS, content_types=["text","photo","video","document"])
 def broadcast_wizard_step(message):
     user_id = message.from_user.id
     if user_id not in BROADCAST_DATA:
@@ -203,9 +204,6 @@ def broadcast_wizard_step(message):
         data["media"].append({"type":"document","file_id":message.document.file_id,"caption":message.caption or ""})
     else:
         bot.reply_to(message, "❌ Unsupported type")
-
-    # Keep listening for next message
-    bot.register_next_step_handler(message, broadcast_wizard_step)
 
 # -----------------------------
 # Broadcast Function (Multi-Media)
