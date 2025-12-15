@@ -397,3 +397,6 @@ if __name__ == "__main__":
     setup_webhook()
     threading.Thread(target=keep_alive, daemon=True).start()
     logging.info("Bot ready. Run Flask via Gunicorn.")
+
+
+#yf
